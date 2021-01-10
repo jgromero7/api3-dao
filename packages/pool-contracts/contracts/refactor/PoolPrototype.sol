@@ -19,12 +19,12 @@ contract PoolPrototype is MiniMeToken {
 
     constructor(IInflation _inflationManager, IApi3Token _api3Token) public MiniMeToken(
         _tokenFactory,
-        0x0,
-        0,
+        _parentToken,
+        _parentSnapShotBlock,
         _tokenName,
         _decimalUnits,
         _tokenSymbol,
-        false
+        _transfersEnabled
     ) {
         api3Token = IApi3Token(_api3Token);
         inflationManager = IInflation(_inflationManager);

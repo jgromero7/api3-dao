@@ -105,8 +105,8 @@ contract PoolPrototype is MiniMeToken {
     }
 
     function unstake() public {
-        require(unstakeRequests[owner], "Sender has no current unstake request");
-        uint256 unlockHeight = unstakeRequests[owner].fromBlock + unstakeWaitingPeriod;
+        require(unstakeRequests[msg.sender], "Sender has no current unstake request");
+        uint256 unlockHeight = unstakeRequests[msg.sender].fromBlock + unstakeWaitingPeriod;
         require(unlockHeight <= block.number, 
                 "Unstake waiting period has " + (unlockHeight - block.number) + " blocks remaining");
 

@@ -11,7 +11,7 @@ contract PoolPrototype is MiniMeToken {
     mapping(address => Checkpoint) unstakeRequests;
 
     //1 week = 43200 blocks
-    uint256 public constant unstakeWaitingPeriod = 43200;
+    uint256 public unstakeWaitingPeriod = 43200;
 
     event UnstakeRequest(address indexed owner, uint256 amount);
     event CancelUnstakeRequest(address indexed owner, uint256 requestStartBlock, uint256 amount);
@@ -110,6 +110,10 @@ contract PoolPrototype is MiniMeToken {
                 "Unstake waiting period has " + (unlockHeight - block.number) + " blocks remaining");
 
         _unstake(msg.sender);
+    }
+
+    function updateUnstakeWaitingPeriod(uint256 blockInterval) public {
+        unstakeWaitingPeriod = blockInterval;
     }
 
     function _unstake(address owner) internal {

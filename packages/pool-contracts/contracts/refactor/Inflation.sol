@@ -41,15 +41,6 @@ contract Inflation is Ownable {
         firstEpochTimestamp = block.timestamp;
     }
 
-    modifier onlyVote {
-        require(msg.sender == address(api3Voting), 
-        "Function can only be called by Aragon voting app");
-    }
-
-    modifier epochCompleted {
-        require(isEpochEnd(), "Function can only be called after completion of the previous epoch");
-    }
-
     function getCurrentUnmintedRewards() external returns (uint256) {
         //Code for per-block rather than epoch-based calculation
         //
@@ -70,7 +61,8 @@ contract Inflation is Ownable {
         return newSupply.sub(tokenSupply);
     }
 
-    function mintRewards() external epochCompleted {
+    function mintRewards() external {
+        require(isEpochEnd(), "Function can only be called after completion of the previous epoch");
         _mintRewards();
     }
 
@@ -82,7 +74,7 @@ contract Inflation is Ownable {
     function _mintRewards() internal {
         uint256 _currentUnminted = getCurrentUnmintedRewards();
         _setInflationPerEpoch();
-        // lastUpdateTime factors in remainder seconds to every second is counted, despite integer epochs
+        // lastUpdateTime factors in remainder seconds so every second is counted, despite integer epochs
         lastUpdateTime = block.timestamp.sub(
                             block.timestamp.sub(lastUpdateTime)
                             .mod(epochLength));

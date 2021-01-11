@@ -40,8 +40,7 @@ contract PoolPrototype is MiniMeToken {
 
     function balanceOfAt(address owner, uint256 fromBlock) public
     returns (uint256) {
-        Checkpoint _lastOwnerBalance = super.balanceOfAt(owner, block.number);
-        Checkpoint _lastSupply = super.totalSupplyAt(block.number);
+        Checkpoint _lastOwnerBalance = balances[owner][balances[owner].length - 1];
         uint256 accumulatedStake = _lastOwnerBalance.value;
         uint256 i = getCheckpointIndex(
             totalSupplyHistory,

@@ -132,8 +132,6 @@ describe('StakeUtils_MultiCase', () => {
       const totalStaked = await pool.totalStake();
       const totalShares = await pool.totalSupply();
       expect(shares).to.equal(totalShares.mul(staked).div(totalStaked));
-      // check delegated
-      // TODO: ensure stake updates delegated
     })
   })
 

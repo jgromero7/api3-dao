@@ -60,7 +60,6 @@ describe('StateUtils', () => {
     })
   })
 
-  // TODO: test with !minterStatus
   testCases.map(({ staked, target, apr }, index) => {
     it(`pay rewards: case ${index}`, async () => {
       // jump to future epoch

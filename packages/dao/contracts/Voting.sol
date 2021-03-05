@@ -12,9 +12,6 @@ import "@aragon/os/contracts/lib/math/SafeMath64.sol";
 
 import "@aragon/minime/contracts/MiniMeToken.sol";
 
-import 
-
-
 contract Voting is IForwarder, AragonApp {
     using SafeMath for uint256;
     using SafeMath64 for uint64;
@@ -23,6 +20,8 @@ contract Voting is IForwarder, AragonApp {
     bytes32 public constant CREATE_VOTES_ROLE = keccak256("CREATE_VOTES_ROLE");
     bytes32 public constant MODIFY_SUPPORT_ROLE = keccak256("MODIFY_SUPPORT_ROLE");
     bytes32 public constant MODIFY_QUORUM_ROLE = keccak256("MODIFY_QUORUM_ROLE");
+    //*
+    bytes32 public constant MODIFY_MINIMUM_ROLE = keccak256("MODIFY_MINIMUM_ROLE");
 
     uint64 public constant PCT_BASE = 10 ** 18; // 0% = 0; 1% = 10^16; 100% = 10^18
 
@@ -36,12 +35,12 @@ contract Voting is IForwarder, AragonApp {
     string private constant ERROR_CAN_NOT_EXECUTE = "VOTING_CAN_NOT_EXECUTE";
     string private constant ERROR_CAN_NOT_FORWARD = "VOTING_CAN_NOT_FORWARD";
     string private constant ERROR_NO_VOTING_POWER = "VOTING_NO_VOTING_POWER";
+    //*
+    string private constant ERROR_NOT_VOTE_CREATOR = "VOTING_NOT_VOTE_CREATOR";
+    string private constant ERROR_TOO_MANY_VOTES = "VOTING_EXCEED_WEEKLY_PROPS";
+    string private constant ERROR_INSUFFICIENT_POWER = "VOTING_INSUFFICIENT_POWER";
 
     enum VoterState { Absent, Yea, Nay }
-    struct Voter {
-        VoteState state;
-        uint256 atBlock;
-    }
 
     struct Vote {
         bool executed;
@@ -61,21 +60,23 @@ contract Voting is IForwarder, AragonApp {
     uint64 public supportRequiredPct;
     uint64 public minAcceptQuorumPct;
     uint64 public voteTime;
+    //*
+    uint256 public minPropPct;
 
     // We are mimicing an array, we use a mapping instead to make app upgrade more graceful
     mapping (uint256 => Vote) internal votes;
     uint256 public votesLength;
-
-    uint256 public minimumVotingPowerToPropose = 1000000;
+    //*
     mapping(address => uint256) public lastUserProposalTimes;
-
-    mapping(address => mapping(uint256 => string) public proposalSpecUrls;
+    mapping(uint256 => string) public voteSpecs;
 
     event StartVote(uint256 indexed voteId, address indexed creator, string metadata);
     event CastVote(uint256 indexed voteId, address indexed voter, bool supports, uint256 stake);
     event ExecuteVote(uint256 indexed voteId);
     event ChangeSupportRequired(uint64 supportRequiredPct);
     event ChangeMinQuorum(uint64 minAcceptQuorumPct);
+    //*
+    event ChangeMinPropPct(uint256 minPropPct);
 
     modifier voteExists(uint256 _voteId) {
         require(_voteId < votesLength, ERROR_NO_VOTE);
@@ -89,7 +90,11 @@ contract Voting is IForwarder, AragonApp {
     * @param _minAcceptQuorumPct Percentage of yeas in total possible votes for a vote to succeed (expressed as a percentage of 10^18; eg. 10^16 = 1%, 10^18 = 100%)
     * @param _voteTime Seconds that a vote will be open for token holders to vote (unless enough yeas or nays have been cast to make an early decision)
     */
-    function initialize(MiniMeToken _token, uint64 _supportRequiredPct, uint64 _minAcceptQuorumPct, uint64 _voteTime) external onlyInit {
+    function initialize(MiniMeToken _token, 
+    uint64 _supportRequiredPct, 
+    uint64 _minAcceptQuorumPct, 
+    uint64 _voteTime, 
+    uint256 _minPropPct) external onlyInit {
         initialized();
 
         require(_minAcceptQuorumPct <= _supportRequiredPct, ERROR_INIT_PCTS);
@@ -99,6 +104,7 @@ contract Voting is IForwarder, AragonApp {
         supportRequiredPct = _supportRequiredPct;
         minAcceptQuorumPct = _minAcceptQuorumPct;
         voteTime = _voteTime;
+        minPropPct = _minPropPct;
     }
 
     /**
@@ -114,6 +120,16 @@ contract Voting is IForwarder, AragonApp {
         supportRequiredPct = _supportRequiredPct;
 
         emit ChangeSupportRequired(_supportRequiredPct);
+    }
+
+    function changeMinPropPct(uint256 _minPropPct)
+        external
+        authP(MODIFY_MINIMUM_ROLE, arr(_minPropPct, minPropPct)
+    {
+        require(_supportRequiredPct < PCT_BASE, ERROR_CHANGE_SUPPORT_TOO_BIG);
+        minPropPct = _minPropPct;
+
+        emit ChangeMinPropPct(_minPropPct);
     }
 
     /**
@@ -156,10 +172,11 @@ contract Voting is IForwarder, AragonApp {
         return _newVote(_executionScript, _metadata, _castVote, _executesIfDecided);
     }
 
-    function provideSpecs(uint256 proposalNo, string calldata proposalSpecsUrl)
-    external
+    function provideSpec(uint256 _voteId, string calldata _voteSpecUrl)
+    external voteExists(_voteId)
     {
-        proposalSpecUrls[msg.sender][proposalNo] = proposalSpecsUrl;
+        require(msg.sender == votes[_voteId].creator, ERROR_NOT_VOTE_CREATOR);
+        voteSpecs[_voteId] = _voteSpecUrl;
     }
 
     /**
@@ -303,9 +320,10 @@ contract Voting is IForwarder, AragonApp {
         uint64 snapshotBlock = getBlockNumber64() - 1; // avoid double voting in this very block
         uint256 votingPower = token.totalSupplyAt(snapshotBlock);
         require(votingPower > 0, ERROR_NO_VOTING_POWER);
-        require(lastUserProposalTimes[msg.sender] < block.now.sub(token.rewardEpochLength()), "Users limited to one proposal per epoch");
-        uint256 proposerVotingPower = token.balanceOf(msg.sender);
-        require(proposerVotingPower >= minimumVotingPowerToPropose, "Insufficient stake");
+        require(lastUserProposalTimes[msg.sender] <= block.now.sub(604800), ERROR_TOO_MANY_VOTES);
+        uint256 proposerVotingPower = token.balanceOfAt(snapshotBlock, msg.sender);
+        uint256 proposerVotingPct = proposerVotingPower.div(votingPower);
+        require(proposerVotingPct >= minPropPct, ERROR_INSUFFICIENT_POWER);
 
         voteId = votesLength++;
 

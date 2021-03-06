@@ -131,6 +131,12 @@ contract StateUtils is IStateUtils {
     /// the pool, effectively distributing them to the stakers.
     uint256 public currentApr = maxApr;
 
+    /// @notice Mapping that keeps the specs of a proposal provided by a user
+    /// @dev After making a proposal through the Agent app, the user publishes
+    /// the specs of the proposal (target contract address, function,
+    /// parameters) at a URL
+    mapping(address => mapping(uint256 => string)) public userAddressToProposalIndexToSpecsUrl;
+
     /// @dev Pays the epoch reward before the modified function
     modifier payEpochRewardBefore {
         payReward();

@@ -96,4 +96,25 @@ contract GovernanceUtils is TimelockUtils, IGovernanceUtils {
             aprUpdateCoeff
             );
     }
+
+    /// @notice Called by the owner of the proposal to publish the specs URL
+    /// @dev Since the owner of a proposal is known, users publishing specs for
+    /// a proposal that is not their own is not a concern
+    /// @param proposalIndex Proposal index
+    /// @param specsUrl URL that hosts the specs of the transaction that will
+    /// be made if the proposal passes
+    function publishSpecsUrl(
+        uint256 proposalIndex,
+        string calldata specsUrl
+        )
+        external
+        override
+    {
+        userAddressToProposalIndexToSpecsUrl[msg.sender][proposalIndex] = specsUrl;
+        emit PublishedSpecsUrl(
+            proposalIndex,
+            msg.sender,
+            specsUrl
+            );
+    }
 }

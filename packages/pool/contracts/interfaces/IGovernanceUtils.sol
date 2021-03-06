@@ -34,6 +34,12 @@ interface IGovernanceUtils is ITimelockUtils {
         bool status
         );
 
+    event PublishedSpecsUrl(
+        uint256 proposalIndex,
+        address userAddress,
+        string specsUrl
+        );
+
     function setStakeTarget(uint256 _stakeTarget)
         external;
 
@@ -47,5 +53,11 @@ interface IGovernanceUtils is ITimelockUtils {
         external;
 
     function setUpdateCoefficient(uint256 _aprUpdateCoeff)
+        external;
+
+    function publishSpecsUrl(
+        uint256 proposalIndex,
+        string calldata specsUrl
+        )
         external;
 }

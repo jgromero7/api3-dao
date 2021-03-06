@@ -1,26 +1,16 @@
 //SPDX-License-Identifier: MIT
 pragma solidity 0.6.12;
 
-import "./GetterUtils.sol";
+import "./DelegationUtils.sol";
+import "./interfaces/ITransferUtils.sol";
 
 /// @title Contract that implements token transfer functionality
-contract TransferUtils is GetterUtils {
+contract TransferUtils is DelegationUtils, ITransferUtils {
     /// @param api3TokenAddress API3 token contract address
     constructor(address api3TokenAddress)
-        GetterUtils(api3TokenAddress)
+        DelegationUtils(api3TokenAddress)
         public
     {}
-
-    event Deposited(
-        address indexed user,
-        uint256 amount
-        );
-
-    event Withdrew(
-        address indexed user,
-        address indexed destination,
-        uint256 amount
-        );
 
     /// @notice Called to deposit tokens for a beneficiary
     /// @dev This method is used by `TimelockManager.sol`
@@ -33,6 +23,7 @@ contract TransferUtils is GetterUtils {
         address userAddress
         )
         public
+        override
     {
         users[userAddress].unstaked = users[userAddress].unstaked.add(amount);
         api3Token.transferFrom(source, address(this), amount);
@@ -41,7 +32,7 @@ contract TransferUtils is GetterUtils {
 
     /// @notice Called to withdraw tokens
     /// @dev The user should call `getUserLockedAt()` beforehand to ensure that
-    /// they have `amount` unlocked tokens to withdraw
+    /// they have at least `amount` unlocked tokens to withdraw
     /// @param destination Token transfer destination
     /// @param amount Amount to be withdrawn
     function withdraw(
@@ -49,6 +40,7 @@ contract TransferUtils is GetterUtils {
         uint256 amount
         )
         public
+        override
     {
         // Since the following operation depends on the number of locked tokens
         // of the user, update that first

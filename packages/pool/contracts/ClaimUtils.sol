@@ -2,19 +2,15 @@
 pragma solidity 0.6.12;
 
 import "./StakeUtils.sol";
+import "./interfaces/IClaimUtils.sol";
 
 /// @title Contract that implements the insurance claim payout functionality
-contract ClaimUtils is StakeUtils {
+contract ClaimUtils is StakeUtils, IClaimUtils {
     /// @param api3TokenAddress API3 token contract address
     constructor(address api3TokenAddress)
         StakeUtils(api3TokenAddress)
         public
     {}
-
-    event ClaimPayout(
-        uint256 indexed claimBlock,
-        uint256 amount
-        );
 
     /// @notice Called by a claims manager to pay out an insurance claim
     /// @dev The claims manager is a trusted contract that is allowed to
@@ -26,6 +22,7 @@ contract ClaimUtils is StakeUtils {
     /// @param amount Amount of tokens that will be paid out
     function payOutClaim(uint256 amount)
         external
+        override
         payEpochRewardBefore()
         onlyClaimsManager()
     {

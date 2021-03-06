@@ -1,5 +1,5 @@
 {
-  "name": "api3-dao-pool-poc-v2",
+  "name": "api3-dao-pool",
   "scripts": {
     "build": "hardhat compile",
     "test": "hardhat test",

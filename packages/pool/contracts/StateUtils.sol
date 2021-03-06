@@ -3,9 +3,10 @@ pragma solidity 0.6.12;
 
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "./auxiliary/interfaces/IApi3Token.sol";
+import "./interfaces/IStateUtils.sol";
 
 /// @title Contract that keeps state variables
-contract StateUtils {
+contract StateUtils is IStateUtils {
     using SafeMath for uint256;
 
     struct Checkpoint {
@@ -13,22 +14,22 @@ contract StateUtils {
         uint256 value;
     }
 
+    struct AddressCheckpoint {
+        uint256 fromBlock;
+        address delegate;
+    }
+
     struct Reward {
         uint256 atBlock;
         uint256 amount;
     }
 
-    struct Delegation {
-        uint256 fromBlock;
-        address delegate;
-    }
-
     struct User {
         uint256 unstaked;
-        Checkpoint[] shares;
         uint256 locked;
         uint256 vesting;
-        Delegation[] delegates;
+        Checkpoint[] shares;
+        AddressCheckpoint[] delegates;
         Checkpoint[] delegatedTo;
         uint256 unstakeScheduledFor;
         uint256 unstakeAmount;
@@ -76,7 +77,7 @@ contract StateUtils {
     /// @notice Epoch index of the most recent reward payment
     uint256 public epochIndexOfLastRewardPayment;
 
-    /// @notice User (staker) rewards
+    /// @notice User records
     mapping(address => User) public users;
 
     /// @notice Total number of tokens staked at the pool, kept in checkpoints
@@ -88,7 +89,14 @@ contract StateUtils {
     // All percentage values are represented by multiplying by 1e6
     uint256 internal constant onePercent = 1_000_000;
     uint256 internal constant hundredPercent = 100_000_000;
-    
+
+    /// @notice Stake target the pool will aim to meet. The staking rewards
+    /// increase if the total staked amount is below this, and vice versa.
+    /// @dev Unit is API3 tokens. Since API3 `decimals` is 18, `ether` is used
+    /// here. Default target is 30 million tokens. This parameter is governable
+    /// by the DAO.
+    uint256 public stakeTarget = 30_000_000 ether;
+
     /// @notice Minimum APR (annual percentage rate) the pool will pay as
     /// staking rewards in percentages
     /// @dev Default value is 2.5%. This parameter is governable by the DAO.
@@ -98,13 +106,6 @@ contract StateUtils {
     /// staking rewards in percentages
     /// @dev Default value is 75%. This parameter is governable by the DAO.
     uint256 public maxApr = 75_000_000;
-
-    /// @notice Stake target the pool will aim to meet. The staking rewards
-    /// increase if the total staked amount is below this, and vice versa.
-    /// @dev Unit is API3 tokens. Since API3 `decimals` is 18, `ether` is used
-    /// here. Default target is 30 million tokens. This parameter is governable
-    /// by the DAO.
-    uint256 public stakeTarget = 30_000_000 ether;
 
     /// @notice Coefficient that represents how aggresively the APR will be
     /// updated to meet the stake target.
@@ -116,7 +117,8 @@ contract StateUtils {
     /// @notice Users need to schedule an unstaking and wait for
     /// `unstakeWaitPeriod` before being able to unstake. This is to prevent
     /// the stakers from frontrunning insurance claims by unstaking to evade
-    /// them.
+    /// them, or repeatedly unstake/stake to work around the proposal spam
+    /// guard.
     /// @dev This parameter is governable by the DAO, and the DAO is expected
     /// to set this large enough to allow insurance claims to be resolved.
     uint256 public unstakeWaitPeriod = epochLength;
@@ -124,38 +126,14 @@ contract StateUtils {
     /// @notice APR that will be paid next epoch
     /// @dev This is initialized at maximum APR, but will come to an
     /// equilibrium based on the stake target.
+    /// Every epoch (week), APR/52 of the total staked tokens will be added to
+    /// the pool, effectively distributing them to the stakers.
     uint256 public currentApr = maxApr;
-
-    event PaidReward(
-        uint256 indexed epoch,
-        uint256 rewardAmount,
-        uint256 newApr
-        );
-
-    event UpdatedUserLocked(
-        address indexed user,
-        uint256 toEpoch,
-        uint256 locked
-        );
-
-    event SetDaoAgent(address daoAgent);
-
-    event SetClaimsManagerStatus(
-        address claimsManager,
-        bool status
-        );
 
     /// @dev Pays the epoch reward before the modified function
     modifier payEpochRewardBefore {
         payReward();
         _;
-    }
-
-    /// @dev Pays the epoch reward after the modified function.
-    /// Used if the function changes the reward amount.
-    modifier payEpochRewardAfter {
-        _;
-        payReward();
     }
 
     /// @dev Reverts if the caller is not the DAO Agent App
@@ -164,7 +142,7 @@ contract StateUtils {
         _;
     }
 
-    /// @dev Reverts if the caller is not the claims manager
+    /// @dev Reverts if the caller is not a claims manager
     modifier onlyClaimsManager() {
         require(claimsManagerStatus[msg.sender], "Unauthorized");
         _;
@@ -195,11 +173,12 @@ contract StateUtils {
     /// a constructor argument, then this method will be called to set the DAO
     /// Agent address. Before using the resulting setup, it must be verified
     /// that the Agent address is set correctly.
-    /// This method can be called only once. Therefore, no access control is
-    /// needed.
+    /// This method can set the DAO Agent only once. Therefore, no access
+    /// control is needed.
     /// @param _daoAgent Address of the Agent app of the API3 DAO
     function setDaoAgent(address _daoAgent)
         external
+        override
     {
         require(daoAgent == address(0), "DAO Agent already set");
         daoAgent = _daoAgent;
@@ -211,16 +190,21 @@ contract StateUtils {
     /// @dev The claims manager is a trusted contract that is allowed to
     /// withdraw as many tokens as it wants from the pool to pay out insurance
     /// claims.
-    function setClaimsManagerStatus(address claimsManager, bool status)
+    function setClaimsManagerStatus(
+        address claimsManager,
+        bool status
+        )
         external
+        override
         onlyDaoAgent()
     {
         claimsManagerStatus[claimsManager] = status;
         emit SetClaimsManagerStatus(claimsManager, status);
     }
 
-    /// @notice Updates the current APR before paying the reward
-    /// @param totalStakedNow Total number of tokens staked at the pool now
+    /// @notice Updates the current APR
+    /// @dev Called internally before paying out the reward
+    /// @param totalStakedNow Current total number of tokens staked at the pool
     function updateCurrentApr(uint256 totalStakedNow)
         internal
     {
@@ -263,11 +247,12 @@ contract StateUtils {
     /// Neither of these conditions will happen in practice.
     function payReward()
         public
+        override
     {
         uint256 currentEpoch = now.div(epochLength);
-        // This will be skipped in most cases because someone else has
+        // This will be skipped in most cases because someone else will have
         // triggered the payment for this epoch
-        if (epochIndexOfLastRewardPayment != currentEpoch)
+        if (epochIndexOfLastRewardPayment < currentEpoch)
         {
             if (api3Token.getMinterStatus(address(this)))
             {
@@ -289,14 +274,16 @@ contract StateUtils {
     /// @dev The user has to update their locked tokens up to the current epoch
     /// before withdrawing. In case this costs too much gas, this method
     /// accepts a `targetEpoch` parameter for the user to be able to make this
-    /// update through successive transactions.
+    /// update through multiple transactions.
     /// @param userAddress User address
-    /// @param targetEpoch Epoch index until the locked tokens will be updated
+    /// @param targetEpoch Epoch index until which the locked tokens will be
+    /// updated
     function updateUserLocked(
         address userAddress,
         uint256 targetEpoch
         )
         public
+        override
     {
         uint256 newLocked = getUserLockedAt(userAddress, targetEpoch);
         User storage user = users[userAddress];
@@ -316,6 +303,7 @@ contract StateUtils {
         uint256 targetEpoch
         )
         public
+        override
         payEpochRewardBefore()
         returns(uint256)
     {
@@ -324,11 +312,12 @@ contract StateUtils {
         User storage user = users[userAddress];
         uint256 lastUpdateEpoch = user.lastUpdateEpoch;
         require(targetEpoch <= currentEpoch
-                && targetEpoch > lastUpdateEpoch
-                && targetEpoch > oldestLockedEpoch,
-                "Invalid target");
-        // If the last update has been way in the past, we can just reset all
-        // locked and lock back rewards paid in the last `rewardVestingPeriod`
+            && targetEpoch > lastUpdateEpoch
+            && targetEpoch > oldestLockedEpoch,
+            "Invalid target"
+            );
+        // If the last update is way in the past, we can just reset all locked
+        // and lock back rewards paid in the last `rewardVestingPeriod`
         if (lastUpdateEpoch < oldestLockedEpoch) {
             uint256 locked = 0;
             for (
@@ -355,7 +344,7 @@ contract StateUtils {
             uint256 userSharesThen = getValueAt(user.shares, lockedReward.atBlock);
             locked = locked.add(lockedReward.amount.mul(userSharesThen).div(totalSharesThen));
         }
-        // ...then apply the reward unlocks if applicable
+        // ...then unlock the rewards that have matured (if applicable)
         if (targetEpoch >= genesisEpoch.add(rewardVestingPeriod)) {
             for (
                 uint256 ind = user.oldestLockedEpoch;
@@ -366,8 +355,8 @@ contract StateUtils {
                 uint256 totalSharesThen = getValueAt(totalShares, unlockedReward.atBlock);
                 uint256 userSharesThen = getValueAt(user.shares, unlockedReward.atBlock);
                 uint256 toUnlock = unlockedReward.amount.mul(userSharesThen).div(totalSharesThen);
-                // `locked` has a risk to underflow due to the reward
-                // revocations during scheduling unstakings, which is why we
+                // `locked` has a risk of underflowing due to the reward
+                // revocations during scheduling unstakes, which is why we
                 // clip it at 0
                 locked = locked > toUnlock ? locked.sub(toUnlock) : 0;
             }
@@ -375,13 +364,14 @@ contract StateUtils {
         return locked;
     }
 
-    /// @notice Called to get the locked tokens of the user
-    /// @dev This can be called statically by clients to get the locked tokens
-    /// of the user without actually updating it
+    /// @notice Called to get the current locked tokens of the user
+    /// @dev This can be called statically by clients (e.g., the DAO dashboard)
+    /// to get the locked tokens of the user without actually updating it
     /// @param userAddress User address
-    /// @return Locked tokens of the user in the current epoch
+    /// @return Current locked tokens of the user
     function getUserLocked(address userAddress)
         external
+        override
         returns(uint256)
     {
         return getUserLockedAt(userAddress, now.div(epochLength));
@@ -396,8 +386,8 @@ contract StateUtils {
         returns(uint256)
     {
         uint256 currentEpoch = now.div(epochLength);
-        return currentEpoch >= genesisEpoch.add(rewardVestingPeriod) ?
-                currentEpoch.sub(rewardVestingPeriod) : genesisEpoch;
+        return currentEpoch >= genesisEpoch.add(rewardVestingPeriod)
+            ? currentEpoch.sub(rewardVestingPeriod) : genesisEpoch;
     }
 
     /// @notice Called to get the value of a checkpoint array at a specific
@@ -446,5 +436,54 @@ contract StateUtils {
         returns (uint256)
     {
         return getValueAt(checkpoints, block.number);
+    }
+
+    /// @notice Called to get the value of an address checkpoint array at a
+    /// specific block
+    /// @dev This is same as `getValueAt()`, except the value being kept in the
+    /// checkpoints is an address
+    /// @param checkpoints Address checkpoints array
+    /// @param _block Block number for which the query is being made
+    /// @return Address value of the checkpoint array at the block
+    function getAddressAt(
+        AddressCheckpoint[] storage checkpoints,
+        uint _block
+        )
+        internal
+        view
+        returns(address)
+    {
+        if (checkpoints.length == 0)
+            return address(0);
+
+        // Shortcut for the actual value
+        if (_block >= checkpoints[checkpoints.length.sub(1)].fromBlock)
+            return checkpoints[checkpoints.length.sub(1)].delegate;
+        if (_block < checkpoints[0].fromBlock)
+            return address(0);
+
+        // Binary search of the value in the array
+        uint min = 0;
+        uint max = checkpoints.length.sub(1);
+        while (max > min) {
+            uint mid = (max.add(min).add(1)).div(2);
+            if (checkpoints[mid].fromBlock<=_block) {
+                min = mid;
+            } else {
+                max = mid.sub(1);
+            }
+        }
+        return checkpoints[min].delegate;
+    }
+
+    /// @notice Called to get the current value of an address checkpoint array
+    /// @param checkpoints Address checkpoints array
+    /// @return Current address value of the checkpoint array
+    function getAddress(AddressCheckpoint[] storage checkpoints)
+        internal
+        view
+        returns(address)
+    {
+        return getAddressAt(checkpoints, block.number);
     }
 }

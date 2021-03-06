@@ -1,13 +1,14 @@
 //SPDX-License-Identifier: MIT
 pragma solidity 0.6.12;
 
-import "./DelegationUtils.sol";
+import "./StateUtils.sol";
+import "./interfaces/IGetterUtils.sol";
 
 /// @title Contract that implements getters
-contract GetterUtils is DelegationUtils {
+contract GetterUtils is StateUtils, IGetterUtils {
     /// @param api3TokenAddress API3 token contract address
     constructor(address api3TokenAddress)
-        DelegationUtils(api3TokenAddress)
+        StateUtils(api3TokenAddress)
         public
     {}
 
@@ -21,6 +22,7 @@ contract GetterUtils is DelegationUtils {
         )
         public
         view
+        override
         returns(uint256)
     {
         return getValueAt(users[userAddress].shares, fromBlock);
@@ -30,35 +32,70 @@ contract GetterUtils is DelegationUtils {
     /// @param userAddress User address
     /// @return Current pool shares of the user
     function shares(address userAddress)
-        public view returns (uint256)
+        public
+        view
+        override
+        returns(uint256)
     {
         return sharesAt(block.number, userAddress);
     }
 
-    /// @notice Called to get the delegate of a user at a specific block
+    /// @notice Called to get the voting power delegated to a user at a
+    /// specific block
     /// @param fromBlock Block number for which the query is being made for
     /// @param userAddress User address
-    /// @return Delegate of the user at the block
+    /// @return Voting power delegated to the user at the block
     function delegatedToAt(
         uint256 fromBlock,
         address userAddress
         )
         public
         view
+        override
         returns(uint256)
     {
         return getValueAt(users[userAddress].delegatedTo, fromBlock);
     }
 
-    /// @notice Called to get the current delegate of a user
+    /// @notice Called to get the current voting power delegated to a user
     /// @param userAddress User address
-    /// @return Current delegate of the user
+    /// @return Current voting power delegated to the user
     function delegatedTo(address userAddress)
         public
         view
+        override
         returns(uint256)
     {
         return delegatedToAt(block.number, userAddress);
+    }
+
+    /// @notice Called to check if the user is delegating at a specific block
+    /// @param userAddress User address
+    /// @param _block Block number
+    /// @return Whether the user is delegating at the specific block
+    function userDelegatingAt(
+        address userAddress,
+        uint256 _block
+        )
+        public
+        view
+        override
+        returns(bool)
+    {
+        address userDelegateAt = getAddressAt(users[userAddress].delegates, _block);
+        return userDelegateAt != address(0);
+    }
+
+    /// @notice Called to check if the user is currently delegating
+    /// @param userAddress User address
+    /// @return Whether the user is currently delegating
+    function userDelegating(address userAddress)
+        public
+        view
+        override
+        returns(bool)
+    {
+        return userDelegatingAt(userAddress, block.number);
     }
 
     /// @notice Called to get the voting power of a user at a specific block
@@ -73,6 +110,7 @@ contract GetterUtils is DelegationUtils {
         )
         public
         view
+        override
         returns(uint256)
     {
         // Users that delegate have no voting power
@@ -92,6 +130,7 @@ contract GetterUtils is DelegationUtils {
     function balanceOf(address userAddress)
         public
         view
+        override
         returns(uint256)
     {
         return balanceOfAt(block.number, userAddress);
@@ -103,6 +142,7 @@ contract GetterUtils is DelegationUtils {
     function userStaked(address userAddress)
         public
         view
+        override
         returns(uint256)
     {
         return shares(userAddress).mul(totalStake()).div(totalSupply());
@@ -116,6 +156,7 @@ contract GetterUtils is DelegationUtils {
     function totalSupplyAt(uint256 fromBlock)
         public
         view
+        override
         returns(uint256)
     {
         return getValueAt(totalShares, fromBlock);
@@ -128,6 +169,7 @@ contract GetterUtils is DelegationUtils {
     function totalSupply()
         public
         view
+        override
         returns(uint256)
     {
         return totalSupplyAt(block.number);
@@ -139,6 +181,7 @@ contract GetterUtils is DelegationUtils {
     function totalStakeAt(uint256 fromBlock)
         public
         view
+        override
         returns(uint256)
     {
         return getValueAt(totalStaked, fromBlock);
@@ -149,6 +192,7 @@ contract GetterUtils is DelegationUtils {
     function totalStake()
         public
         view
+        override
         returns(uint256)
     {
         return totalStakeAt(block.number);

@@ -2,11 +2,12 @@
 pragma solidity 0.6.12;
 
 import "./ClaimUtils.sol";
+import "./interfaces/ITimelockUtils.sol";
 
 /// @title Contract that implements vesting functionality
 /// @dev TimelockManager contracts interface with this contract to transfer
 /// API3 tokens that are locked under a vesting schedule.
-contract TimelockUtils is ClaimUtils {
+contract TimelockUtils is ClaimUtils, ITimelockUtils {
     struct Timelock
     {
         uint256 totalAmount;
@@ -22,19 +23,6 @@ contract TimelockUtils is ClaimUtils {
     /// acceptable, because the TimelockManager is implemented in a way to not
     /// allow multiple timelocks per user.
     mapping(address => mapping(address => Timelock)) public userToDepositorToTimelock;
-
-    event DepositedVesting(
-        address indexed user,
-        uint256 amount,
-        uint256 start,
-        uint256 end
-        );
-
-    event UpdatedTimelock(
-        address indexed user,
-        uint256 vesting,
-        uint256 remaining
-        );
 
     /// @param api3TokenAddress API3 token contract address
     constructor(address api3TokenAddress)
@@ -58,6 +46,7 @@ contract TimelockUtils is ClaimUtils {
         uint256 releaseEnd
         )
         external
+        override
     {
         require(userToDepositorToTimelock[userAddress][msg.sender].remainingAmount == 0, "Timelock already exists");
         require(releaseEnd > releaseStart, "Invalid schedule");
@@ -73,12 +62,13 @@ contract TimelockUtils is ClaimUtils {
     /// @param userAddress Address of the user whose timelock status will be
     /// updated
     /// @param timelockManagerAddress Address of the TimelockManager that has
-    /// created thte timelock
+    /// created the timelock
     function updateTimelockStatus(
         address userAddress,
         address timelockManagerAddress
         )
         external
+        override
     {
         Timelock storage timelock = userToDepositorToTimelock[userAddress][timelockManagerAddress];
         require(now > timelock.releaseStart, "Release not started");

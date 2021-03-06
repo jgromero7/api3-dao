@@ -2,35 +2,21 @@
 pragma solidity 0.6.12;
 
 import "./TransferUtils.sol";
+import "./interfaces/IStakeUtils.sol";
 
 /// @title Contract that implements staking functionality
-contract StakeUtils is TransferUtils {
+contract StakeUtils is TransferUtils, IStakeUtils {
     /// @param api3TokenAddress API3 token contract address
     constructor(address api3TokenAddress)
         TransferUtils(api3TokenAddress)
         public
     {}
 
-    event Staked(
-        address indexed user,
-        uint256 amount
-        );
-
-    event ScheduledUnstake(
-        address indexed user,
-        uint256 amount,
-        uint256 scheduledFor
-        );
-
-    event Unstaked(
-        address indexed user,
-        uint256 amount
-        );
-
     /// @notice Called to stake tokens to receive pools in the share
     /// @param amount Amount of tokens to stake
     function stake(uint256 amount)
         public
+        override
         payEpochRewardBefore()
     {
         User storage user = users[msg.sender];
@@ -57,7 +43,10 @@ contract StakeUtils is TransferUtils {
         address source,
         uint256 amount,
         address userAddress
-    ) external {
+        )
+        external
+        override
+    {
         require(userAddress == msg.sender, "Cannot deposit and stake for others");
         deposit(source, amount, userAddress);
         stake(amount);
@@ -68,12 +57,13 @@ contract StakeUtils is TransferUtils {
     /// to be able to unstake.
     /// Scheduling an unstake results in the reward of the current epoch to be
     /// revoked from the user. This is to prevent the user from scheduling
-    /// unstakes that they are not intending to execute (to be used to evade
-    /// insurance claims should they happen)
+    /// unstakes that they are not intending to execute (to be used as a
+    /// fail-safe to evade insurance claims should they happen).
     /// @param amount Amount of tokens for which the unstake will be scheduled
     /// for 
     function scheduleUnstake(uint256 amount)
         external
+        override
         payEpochRewardBefore()
     {
         uint256 totalStakedNow = getValue(totalStaked);
@@ -100,10 +90,13 @@ contract StakeUtils is TransferUtils {
             totalShares.push(Checkpoint(block.number, totalSharesNow));
             updateDelegatedUserShares(sharesToBurn, false);
             // Also revert the token lock. Note that this is only an
-            // approximation. The user's `locked` may be 0 here due to not
-            // updating it yet, in which case this will not help (yet the
-            // locked tokens will still be unlocked `rewardVestingPeriod`
+            // approximation. The user's `locked` may be 0 here due to it
+            // not have been updated yet, in which case this will not help (yet
+            // the locked tokens will still be unlocked `rewardVestingPeriod`
             // epochs later).
+            // This is also why we always check subtractions from the user
+            // `locked` for underflows, we may end up unlocking more than we
+            // have locked.
             user.locked = user.locked > tokensToRevoke ? user.locked.sub(tokensToRevoke) : 0;
             user.epochIndexToRewardRevocationStatus[currentEpoch] = true;
         }
@@ -116,6 +109,7 @@ contract StakeUtils is TransferUtils {
     /// @return Amount of tokens that are unstaked
     function unstake()
         public
+        override
         payEpochRewardBefore()
         returns(uint256)
     {
@@ -135,7 +129,6 @@ contract StakeUtils is TransferUtils {
             amount = sharesToBurn.mul(totalStakedNow).div(totalSharesNow);
         }
         user.unstaked = user.unstaked.add(amount);
-        //The if block above prevents the following two subtractions from underflowing.
         user.shares.push(Checkpoint(block.number, userSharesNow.sub(sharesToBurn)));
         totalShares.push(Checkpoint(block.number, totalSharesNow.sub(sharesToBurn)));
         updateDelegatedUserShares(sharesToBurn, false);
@@ -153,6 +146,7 @@ contract StakeUtils is TransferUtils {
     /// @param destination Token transfer destination
     function unstakeAndWithdraw(address destination)
         external
+        override
     {
         uint256 unstaked = unstake();
         withdraw(destination, unstaked);

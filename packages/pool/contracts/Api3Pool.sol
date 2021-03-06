@@ -2,6 +2,7 @@
 pragma solidity 0.6.12;
 
 import "./GovernanceUtils.sol";
+import "./interfaces/IApi3Pool.sol";
 
 /// @title API3 pool contract
 /// @notice Users can stake API3 tokens at the pool contract to be granted
@@ -18,10 +19,10 @@ import "./GovernanceUtils.sol";
 /// (4) ClaimUtils.sol
 /// (5) StakeUtils.sol
 /// (6) TransferUtils.sol
-/// (7) GetterUtils.sol
-/// (8) DelegationUtils.sol
+/// (7) DelegationUtils.sol
+/// (8) GetterUtils.sol
 /// (9) StateUtils.sol
-contract Api3Pool is GovernanceUtils {
+contract Api3Pool is GovernanceUtils, IApi3Pool {
     /// @param api3TokenAddress API3 token contract address
     constructor(address api3TokenAddress)
         GovernanceUtils(api3TokenAddress)

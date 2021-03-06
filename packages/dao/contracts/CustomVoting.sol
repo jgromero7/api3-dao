@@ -10,15 +10,12 @@ import "@aragon/os/contracts/common/IForwarder.sol";
 import "@aragon/os/contracts/lib/math/SafeMath.sol";
 import "@aragon/os/contracts/lib/math/SafeMath64.sol";
 
-import "@aragon/minime/contracts/MiniMeToken.sol";
-
-import 
+import "@aragon/apps-shared-minime/contracts/MiniMeToken.sol";
 
 
-contract Voting is IForwarder, AragonApp {
+contract CustomVoting is IForwarder, AragonApp {
     using SafeMath for uint256;
     using SafeMath64 for uint64;
-    using EnumerableSet for EnumerableSet.AddressSet;
 
     bytes32 public constant CREATE_VOTES_ROLE = keccak256("CREATE_VOTES_ROLE");
     bytes32 public constant MODIFY_SUPPORT_ROLE = keccak256("MODIFY_SUPPORT_ROLE");
@@ -38,10 +35,6 @@ contract Voting is IForwarder, AragonApp {
     string private constant ERROR_NO_VOTING_POWER = "VOTING_NO_VOTING_POWER";
 
     enum VoterState { Absent, Yea, Nay }
-    struct Voter {
-        VoteState state;
-        uint256 atBlock;
-    }
 
     struct Vote {
         bool executed;
@@ -53,8 +46,7 @@ contract Voting is IForwarder, AragonApp {
         uint256 nay;
         uint256 votingPower;
         bytes executionScript;
-        address creator;
-        mapping (address => Voter) voters;
+        mapping (address => VoterState) voters;
     }
 
     MiniMeToken public token;
@@ -65,11 +57,6 @@ contract Voting is IForwarder, AragonApp {
     // We are mimicing an array, we use a mapping instead to make app upgrade more graceful
     mapping (uint256 => Vote) internal votes;
     uint256 public votesLength;
-
-    uint256 public minimumVotingPowerToPropose = 1000000;
-    mapping(address => uint256) public lastUserProposalTimes;
-
-    mapping(address => mapping(uint256 => string) public proposalSpecUrls;
 
     event StartVote(uint256 indexed voteId, address indexed creator, string metadata);
     event CastVote(uint256 indexed voteId, address indexed voter, bool supports, uint256 stake);
@@ -89,7 +76,15 @@ contract Voting is IForwarder, AragonApp {
     * @param _minAcceptQuorumPct Percentage of yeas in total possible votes for a vote to succeed (expressed as a percentage of 10^18; eg. 10^16 = 1%, 10^18 = 100%)
     * @param _voteTime Seconds that a vote will be open for token holders to vote (unless enough yeas or nays have been cast to make an early decision)
     */
-    function initialize(MiniMeToken _token, uint64 _supportRequiredPct, uint64 _minAcceptQuorumPct, uint64 _voteTime) external onlyInit {
+    function initialize(
+        MiniMeToken _token,
+        uint64 _supportRequiredPct,
+        uint64 _minAcceptQuorumPct,
+        uint64 _voteTime
+    )
+        external
+        onlyInit
+    {
         initialized();
 
         require(_minAcceptQuorumPct <= _supportRequiredPct, ERROR_INIT_PCTS);
@@ -156,12 +151,6 @@ contract Voting is IForwarder, AragonApp {
         return _newVote(_executionScript, _metadata, _castVote, _executesIfDecided);
     }
 
-    function provideSpecs(uint256 proposalNo, string calldata proposalSpecsUrl)
-    external
-    {
-        proposalSpecUrls[msg.sender][proposalNo] = proposalSpecsUrl;
-    }
-
     /**
     * @notice Vote `_supports ? 'yes' : 'no'` in vote #`_voteId`
     * @dev Initialization check is implicitly provided by `voteExists()` as new votes can only be
@@ -187,11 +176,6 @@ contract Voting is IForwarder, AragonApp {
 
     // Forwarding fns
 
-    /**
-    * @notice Tells whether the Voting app is a forwarder or not
-    * @dev IForwarder interface conformance
-    * @return Always true
-    */
     function isForwarder() external pure returns (bool) {
         return true;
     }
@@ -206,12 +190,6 @@ contract Voting is IForwarder, AragonApp {
         _newVote(_evmScript, "", true, true);
     }
 
-    /**
-    * @notice Tells whether `_sender` can forward actions or not
-    * @dev IForwarder interface conformance
-    * @param _sender Address of the account intending to forward an action
-    * @return True if the given address can create votes, false otherwise
-    */
     function canForward(address _sender, bytes) public view returns (bool) {
         // Note that `canPerform()` implicitly does an initialization check itself
         return canPerform(_sender, CREATE_VOTES_ROLE, arr());
@@ -220,39 +198,21 @@ contract Voting is IForwarder, AragonApp {
     // Getter fns
 
     /**
-    * @notice Tells whether a vote #`_voteId` can be executed or not
     * @dev Initialization check is implicitly provided by `voteExists()` as new votes can only be
     *      created via `newVote(),` which requires initialization
-    * @return True if the given vote can be executed, false otherwise
     */
     function canExecute(uint256 _voteId) public view voteExists(_voteId) returns (bool) {
         return _canExecute(_voteId);
     }
 
     /**
-    * @notice Tells whether `_sender` can participate in the vote #`_voteId` or not
     * @dev Initialization check is implicitly provided by `voteExists()` as new votes can only be
     *      created via `newVote(),` which requires initialization
-    * @return True if the given voter can participate a certain vote, false otherwise
     */
     function canVote(uint256 _voteId, address _voter) public view voteExists(_voteId) returns (bool) {
         return _canVote(_voteId, _voter);
     }
 
-    /**
-    * @dev Return all information for a vote by its ID
-    * @param _voteId Vote identifier
-    * @return Vote open status
-    * @return Vote executed status
-    * @return Vote start date
-    * @return Vote snapshot block
-    * @return Vote support required
-    * @return Vote minimum acceptance quorum
-    * @return Vote yeas amount
-    * @return Vote nays amount
-    * @return Vote power
-    * @return Vote script
-    */
     function getVote(uint256 _voteId)
         public
         view
@@ -284,28 +244,19 @@ contract Voting is IForwarder, AragonApp {
         script = vote_.executionScript;
     }
 
-    /**
-    * @dev Return the state of a voter for a given vote by its ID
-    * @param _voteId Vote identifier
-    * @return VoterState of the requested voter for a certain vote
-    */
     function getVoterState(uint256 _voteId, address _voter) public view voteExists(_voteId) returns (VoterState) {
         return votes[_voteId].voters[_voter];
     }
 
     // Internal fns
 
-    /**
-    * @dev Internal function to create a new vote
-    * @return voteId id for newly created vote
-    */
-    function _newVote(bytes _executionScript, string _metadata, bool _castVote, bool _executesIfDecided) internal returns (uint256 voteId) {
+    function _newVote(bytes _executionScript, string _metadata, bool _castVote, bool _executesIfDecided)
+        internal
+        returns (uint256 voteId)
+    {
         uint64 snapshotBlock = getBlockNumber64() - 1; // avoid double voting in this very block
         uint256 votingPower = token.totalSupplyAt(snapshotBlock);
         require(votingPower > 0, ERROR_NO_VOTING_POWER);
-        require(lastUserProposalTimes[msg.sender] < block.now.sub(token.epochLength()), "Users limited to one proposal per epoch");
-        uint256 proposerVotingPower = token.balanceOf(msg.sender);
-        require(proposerVotingPower >= minimumVotingPowerToPropose, "Insufficient stake");
 
         voteId = votesLength++;
 
@@ -316,9 +267,6 @@ contract Voting is IForwarder, AragonApp {
         vote_.minAcceptQuorumPct = minAcceptQuorumPct;
         vote_.votingPower = votingPower;
         vote_.executionScript = _executionScript;
-        vote_.creator = msg.sender;
-
-        lastUserProposalTimes[msg.sender] = block.now;
 
         emit StartVote(voteId, msg.sender, _metadata);
 
@@ -327,14 +275,17 @@ contract Voting is IForwarder, AragonApp {
         }
     }
 
-    /**
-    * @dev Internal function to cast a vote. It assumes the queried vote exists.
-    */
-    function _vote(uint256 _voteId, bool _supports, address _voter, bool _executesIfDecided) internal {
+    function _vote(
+        uint256 _voteId,
+        bool _supports,
+        address _voter,
+        bool _executesIfDecided
+    ) internal
+    {
         Vote storage vote_ = votes[_voteId];
 
         // This could re-enter, though we can assume the governance token is not malicious
-        uint256 voterStake = token.balanceOfAt(votes[_voteId].snapshotBlock, _voter);
+        uint256 voterStake = token.balanceOfAt(_voter, vote_.snapshotBlock);
         VoterState state = vote_.voters[_voter];
 
         // If voter had previously voted, decrease count
@@ -360,16 +311,13 @@ contract Voting is IForwarder, AragonApp {
         }
     }
 
-    /**
-    * @dev Internal function to execute a vote. It assumes the queried vote exists.
-    */
     function _executeVote(uint256 _voteId) internal {
         require(_canExecute(_voteId), ERROR_CAN_NOT_EXECUTE);
         _unsafeExecuteVote(_voteId);
     }
 
     /**
-    * @dev Unsafe version of _executeVote that assumes you have already checked if the vote can be executed and exists
+    * @dev Unsafe version of _executeVote that assumes you have already checked if the vote can be executed
     */
     function _unsafeExecuteVote(uint256 _voteId) internal {
         Vote storage vote_ = votes[_voteId];
@@ -382,10 +330,6 @@ contract Voting is IForwarder, AragonApp {
         emit ExecuteVote(_voteId);
     }
 
-    /**
-    * @dev Internal function to check if a vote can be executed. It assumes the queried vote exists.
-    * @return True if the given vote can be executed, false otherwise
-    */
     function _canExecute(uint256 _voteId) internal view returns (bool) {
         Vote storage vote_ = votes[_voteId];
 
@@ -415,19 +359,12 @@ contract Voting is IForwarder, AragonApp {
         return true;
     }
 
-    /**
-    * @dev Internal function to check if a voter can participate on a vote. It assumes the queried vote exists.
-    * @return True if the given voter can participate a certain vote, false otherwise
-    */
     function _canVote(uint256 _voteId, address _voter) internal view returns (bool) {
         Vote storage vote_ = votes[_voteId];
+
         return _isVoteOpen(vote_) && token.balanceOfAt(_voter, vote_.snapshotBlock) > 0;
     }
 
-    /**
-    * @dev Internal function to check if a vote is still open
-    * @return True if the given vote is open, false otherwise
-    */
     function _isVoteOpen(Vote storage vote_) internal view returns (bool) {
         return getTimestamp64() < vote_.startDate.add(voteTime) && !vote_.executed;
     }

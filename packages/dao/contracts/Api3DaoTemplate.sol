@@ -1,9 +1,9 @@
+//SPDX-License-Identifier: MIT
 pragma solidity 0.4.24;
 
-import "@aragon/templates-shared/contracts/BaseTemplate.sol";
+import "./CustomBaseTemplate.sol";
 
-contract Api3DaoTemplate is BaseTemplate {
-
+contract Api3DaoTemplate is CustomBaseTemplate {
   string constant private ERROR_BAD_VOTE_SETTINGS = "API3_DAO_BAD_VOTE_SETTINGS";
 
   address private constant ANY_ENTITY = address(-1);
@@ -22,7 +22,7 @@ contract Api3DaoTemplate is BaseTemplate {
     MiniMeTokenFactory _minimeTokenFactory,
     IFIFSResolvingRegistrar _aragonID
   )
-  BaseTemplate(_daoFactory, _ens, _minimeTokenFactory, _aragonID)
+  CustomBaseTemplate(_daoFactory, _ens, _minimeTokenFactory, _aragonID)
   public
   {
     _ensureAragonIdIsValid(_aragonID);

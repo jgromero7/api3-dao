@@ -31,6 +31,7 @@ contract StateUtils is IStateUtils {
         Checkpoint[] shares;
         AddressCheckpoint[] delegates;
         Checkpoint[] delegatedTo;
+        uint256 lastDelegationUpdateTimestamp;
         uint256 unstakeScheduledFor;
         uint256 unstakeAmount;
         mapping(uint256 => bool) epochIndexToRewardRevocationStatus;

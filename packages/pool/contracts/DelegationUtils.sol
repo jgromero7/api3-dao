@@ -25,6 +25,7 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
         require(!userDelegating(delegate), "Delegate is delegating");
 
         User storage user = users[msg.sender];
+        require(user.lastDelegationUpdateTimestamp <= now.sub(epochLength), "Frequent delegation update");
         uint256 userShares = getValue(user.shares);
         address userDelegate = getAddress(user.delegates);
         if (userDelegate == delegate) {
@@ -53,6 +54,7 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
             fromBlock: block.number,
             _address: delegate
             }));
+        user.lastDelegationUpdateTimestamp = now;
         emit Delegated(
             msg.sender,
             delegate
@@ -65,6 +67,7 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
         override
     {
         User storage user = users[msg.sender];
+        require(user.lastDelegationUpdateTimestamp <= now.sub(epochLength), "Frequent delegation update");
         address userDelegate = getAddress(user.delegates);
         require(userDelegate != address(0), "Not delegated");
 
@@ -80,6 +83,7 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
             fromBlock: block.number,
             _address: address(0)
             }));
+        user.lastDelegationUpdateTimestamp = now;
         emit Undelegated(
             msg.sender,
             userDelegate

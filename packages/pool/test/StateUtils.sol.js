@@ -1,3 +1,5 @@
+const { expect } = require("chai");
+
 let roles;
 let api3Token, api3Pool;
 const onePercent = ethers.BigNumber.from("1" + "000" + "000");
@@ -47,8 +49,8 @@ describe("constructor", function () {
       ethers.BigNumber.from(52)
     );
     // Genesis epoch is the current epoch
-    const currentBlock = await waffle.provider.getBlock(
-      await waffle.provider.getBlockNumber()
+    const currentBlock = await ethers.provider.getBlock(
+      await ethers.provider.getBlockNumber()
     );
     const currentEpoch = ethers.BigNumber.from(currentBlock.timestamp).div(
       await api3Pool.epochLength()
@@ -237,7 +239,7 @@ describe("payReward", function () {
         );
         expect(await api3Pool.currentApr()).to.equal(newApr);
         const reward = await api3Pool.epochIndexToReward(genesisEpochPlusOne);
-        expect(reward.atBlock).to.equal(await waffle.provider.getBlockNumber());
+        expect(reward.atBlock).to.equal(await ethers.provider.getBlockNumber());
         expect(reward.amount).to.equal(rewardAmount);
       });
     });
@@ -367,7 +369,7 @@ describe("payReward", function () {
         );
         expect(await api3Pool.currentApr()).to.equal(newApr);
         const reward = await api3Pool.epochIndexToReward(genesisEpochPlusFive);
-        expect(reward.atBlock).to.equal(await waffle.provider.getBlockNumber());
+        expect(reward.atBlock).to.equal(await ethers.provider.getBlockNumber());
         expect(reward.amount).to.equal(rewardAmount);
       });
       context("Pool contract is not authorized to mint tokens", function () {

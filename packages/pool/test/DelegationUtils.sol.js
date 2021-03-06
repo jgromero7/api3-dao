@@ -1,3 +1,5 @@
+const { expect } = require("chai");
+
 let roles;
 let api3Token, api3Pool;
 
@@ -71,6 +73,8 @@ describe("delegateVotingPower", function () {
             expect(
               await api3Pool.balanceOf(roles.randomPerson.address)
             ).to.equal(user1Stake);
+            // Fast forward time
+            await ethers.provider.send("evm_increaseTime", [7 * 24 * 60 * 60]);
             // ... then have user 1 delegate to user 2
             await expect(
               api3Pool
@@ -121,6 +125,10 @@ describe("delegateVotingPower", function () {
               await api3Pool
                 .connect(roles.user1)
                 .delegateVotingPower(roles.randomPerson.address);
+              // Fast forward time
+              await ethers.provider.send("evm_increaseTime", [
+                7 * 24 * 60 * 60,
+              ]);
               // ... then have user 1 delegate to user 2 again
               await api3Pool
                 .connect(roles.user1)
@@ -199,6 +207,8 @@ describe("undelegateVotingPower", function () {
       await api3Pool
         .connect(roles.user1)
         .delegateVotingPower(roles.user2.address);
+      // Fast forward time
+      await ethers.provider.send("evm_increaseTime", [7 * 24 * 60 * 60]);
       // Have user 1 undelegate
       await expect(api3Pool.connect(roles.user1).undelegateVotingPower())
         .to.emit(api3Pool, "Undelegated")

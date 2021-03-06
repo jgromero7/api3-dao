@@ -1,3 +1,5 @@
+const { expect } = require("chai");
+
 let roles;
 let api3Token, api3Pool;
 

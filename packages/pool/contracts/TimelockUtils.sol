@@ -53,9 +53,19 @@ contract TimelockUtils is ClaimUtils, ITimelockUtils {
         require(amount != 0, "No zero amount");
         users[userAddress].unstaked = users[userAddress].unstaked.add(amount);
         users[userAddress].vesting = users[userAddress].vesting.add(amount);
-        userToDepositorToTimelock[userAddress][msg.sender] = Timelock(amount, amount, releaseStart, releaseEnd);
+        userToDepositorToTimelock[userAddress][msg.sender] = Timelock({
+            totalAmount: amount,
+            remainingAmount: amount,
+            releaseStart: releaseStart,
+            releaseEnd: releaseEnd
+            });
         api3Token.transferFrom(source, address(this), amount);
-        emit DepositedVesting(userAddress, amount, releaseStart, releaseEnd);
+        emit DepositedVesting(
+            userAddress,
+            amount,
+            releaseStart,
+            releaseEnd
+            );
     }
 
     /// @notice Called to release tokens vested by the timelock
@@ -89,6 +99,10 @@ contract TimelockUtils is ClaimUtils, ITimelockUtils {
         user.vesting = user.vesting.sub(newlyUnlocked);
         uint256 newRemainingAmount = timelock.remainingAmount.sub(newlyUnlocked);
         userToDepositorToTimelock[userAddress][timelockManagerAddress].remainingAmount = newRemainingAmount;
-        emit UpdatedTimelock(userAddress, user.vesting, newRemainingAmount);
+        emit UpdatedTimelock(
+            userAddress,
+            user.vesting,
+            newRemainingAmount
+            );
     }
 }

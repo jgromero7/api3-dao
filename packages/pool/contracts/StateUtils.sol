@@ -16,7 +16,7 @@ contract StateUtils is IStateUtils {
 
     struct AddressCheckpoint {
         uint256 fromBlock;
-        address delegate;
+        address _address;
     }
 
     struct Reward {
@@ -154,14 +154,19 @@ contract StateUtils is IStateUtils {
     {
         api3Token = IApi3Token(api3TokenAddress);
         // Initialize the share price at 1
-        totalShares.push(Checkpoint(block.number, 1));
-        totalStaked.push(Checkpoint(block.number, 1));
+        totalShares.push(Checkpoint({
+            fromBlock: block.number,
+            value: 1
+            }));
+        totalStaked.push(Checkpoint({
+            fromBlock: block.number,
+            value: 1
+            }));
         // Set the current epoch as the genesis epoch and skip its reward
         // payment
         uint256 currentEpoch = now.div(epochLength);
         genesisEpoch = currentEpoch;
         epochIndexOfLastRewardPayment = currentEpoch;
-        epochIndexToReward[currentEpoch] = Reward(0, block.number);
     }
 
     /// @notice Called after deployment to set the address of the DAO Agent app
@@ -180,6 +185,7 @@ contract StateUtils is IStateUtils {
         external
         override
     {
+        require(_daoAgent != address(0), "Invalid address");
         require(daoAgent == address(0), "DAO Agent already set");
         daoAgent = _daoAgent;
         emit SetDaoAgent(daoAgent);
@@ -199,7 +205,10 @@ contract StateUtils is IStateUtils {
         onlyDaoAgent()
     {
         claimsManagerStatus[claimsManager] = status;
-        emit SetClaimsManagerStatus(claimsManager, status);
+        emit SetClaimsManagerStatus(
+            claimsManager,
+            status
+            );
     }
 
     /// @notice Updates the current APR
@@ -226,8 +235,7 @@ contract StateUtils is IStateUtils {
         }
         else {
             newApr = hundredPercent > aprUpdate
-                ? currentApr.mul(hundredPercent.sub(aprUpdate)).div(hundredPercent)
-                : 0;
+                ? currentApr.mul(hundredPercent.sub(aprUpdate)).div(hundredPercent) : 0;
         }
 
         if (newApr < minApr) {
@@ -259,12 +267,22 @@ contract StateUtils is IStateUtils {
                 uint256 totalStakedNow = getValue(totalStaked);
                 updateCurrentApr(totalStakedNow);
                 uint256 rewardAmount = totalStakedNow.mul(currentApr).div(rewardVestingPeriod).div(hundredPercent);
-                epochIndexToReward[currentEpoch] = Reward(rewardAmount, block.number);
+                epochIndexToReward[currentEpoch] = Reward({
+                    atBlock: block.number,
+                    amount: rewardAmount
+                    });
                 if (rewardAmount > 0) {
                     api3Token.mint(address(this), rewardAmount);
-                    totalStaked.push(Checkpoint(block.number, totalStakedNow.add(rewardAmount)));
+                    totalStaked.push(Checkpoint({
+                        fromBlock: block.number,
+                        value: totalStakedNow.add(rewardAmount)
+                        }));
                 }
-                emit PaidReward(currentEpoch, rewardAmount, currentApr);
+                emit PaidReward(
+                    currentEpoch,
+                    rewardAmount,
+                    currentApr
+                    );
             }
             epochIndexOfLastRewardPayment = currentEpoch;
         }
@@ -290,7 +308,11 @@ contract StateUtils is IStateUtils {
         user.locked = newLocked;
         user.oldestLockedEpoch = getOldestLockedEpoch();
         user.lastUpdateEpoch = targetEpoch;
-        emit UpdatedUserLocked(userAddress, targetEpoch, user.locked);
+        emit UpdatedUserLocked(
+            userAddress,
+            targetEpoch,
+            user.locked
+            );
     }
 
     /// @notice Called to get the locked tokens of the user at a specific epoch
@@ -326,9 +348,12 @@ contract StateUtils is IStateUtils {
                 ind = ind.add(1)
             ) {
                 Reward storage lockedReward = epochIndexToReward[ind];
-                uint256 totalSharesThen = getValueAt(totalShares, lockedReward.atBlock);
-                uint256 userSharesThen = getValueAt(user.shares, lockedReward.atBlock);
-                locked = locked.add(lockedReward.amount.mul(userSharesThen).div(totalSharesThen));
+                if (lockedReward.atBlock != 0)
+                {
+                    uint256 totalSharesThen = getValueAt(totalShares, lockedReward.atBlock);
+                    uint256 userSharesThen = getValueAt(user.shares, lockedReward.atBlock);
+                    locked = locked.add(lockedReward.amount.mul(userSharesThen).div(totalSharesThen));
+                }
             }
             return locked;
         }
@@ -340,9 +365,12 @@ contract StateUtils is IStateUtils {
             ind = ind.add(1)
         ) {
             Reward storage lockedReward = epochIndexToReward[ind];
-            uint256 totalSharesThen = getValueAt(totalShares, lockedReward.atBlock);
-            uint256 userSharesThen = getValueAt(user.shares, lockedReward.atBlock);
-            locked = locked.add(lockedReward.amount.mul(userSharesThen).div(totalSharesThen));
+            if (lockedReward.atBlock != 0)
+            {
+                uint256 totalSharesThen = getValueAt(totalShares, lockedReward.atBlock);
+                uint256 userSharesThen = getValueAt(user.shares, lockedReward.atBlock);
+                locked = locked.add(lockedReward.amount.mul(userSharesThen).div(totalSharesThen));
+            }
         }
         // ...then unlock the rewards that have matured (if applicable)
         if (targetEpoch >= genesisEpoch.add(rewardVestingPeriod)) {
@@ -352,13 +380,16 @@ contract StateUtils is IStateUtils {
                 ind = ind.add(1)
             ) {
                 Reward storage unlockedReward = epochIndexToReward[ind.sub(rewardVestingPeriod)];
-                uint256 totalSharesThen = getValueAt(totalShares, unlockedReward.atBlock);
-                uint256 userSharesThen = getValueAt(user.shares, unlockedReward.atBlock);
-                uint256 toUnlock = unlockedReward.amount.mul(userSharesThen).div(totalSharesThen);
-                // `locked` has a risk of underflowing due to the reward
-                // revocations during scheduling unstakes, which is why we
-                // clip it at 0
-                locked = locked > toUnlock ? locked.sub(toUnlock) : 0;
+                if (unlockedReward.atBlock != 0)
+                {
+                    uint256 totalSharesThen = getValueAt(totalShares, unlockedReward.atBlock);
+                    uint256 userSharesThen = getValueAt(user.shares, unlockedReward.atBlock);
+                    uint256 toUnlock = unlockedReward.amount.mul(userSharesThen).div(totalSharesThen);
+                    // `locked` has a risk of underflowing due to the reward
+                    // revocations during scheduling unstakes, which is why we
+                    // clip it at 0
+                    locked = locked > toUnlock ? locked.sub(toUnlock) : 0;
+                }
             }
         }
         return locked;
@@ -392,7 +423,8 @@ contract StateUtils is IStateUtils {
 
     /// @notice Called to get the value of a checkpoint array at a specific
     /// block
-    /// @dev From https://github.com/aragon/minime/blob/1d5251fc88eee5024ff318d95bc9f4c5de130430/contracts/MiniMeToken.sol#L431
+    /// @dev From 
+    /// https://github.com/aragon/minime/blob/1d5251fc88eee5024ff318d95bc9f4c5de130430/contracts/MiniMeToken.sol#L431
     /// @param checkpoints Checkpoints array
     /// @param _block Block number for which the query is being made
     /// @return Value of the checkpoint array at the block
@@ -458,7 +490,7 @@ contract StateUtils is IStateUtils {
 
         // Shortcut for the actual value
         if (_block >= checkpoints[checkpoints.length.sub(1)].fromBlock)
-            return checkpoints[checkpoints.length.sub(1)].delegate;
+            return checkpoints[checkpoints.length.sub(1)]._address;
         if (_block < checkpoints[0].fromBlock)
             return address(0);
 
@@ -473,7 +505,7 @@ contract StateUtils is IStateUtils {
                 max = mid.sub(1);
             }
         }
-        return checkpoints[min].delegate;
+        return checkpoints[min]._address;
     }
 
     /// @notice Called to get the current value of an address checkpoint array

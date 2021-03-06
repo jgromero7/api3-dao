@@ -21,7 +21,10 @@ contract GovernanceUtils is TimelockUtils, IGovernanceUtils {
     {
         uint256 oldTarget = stakeTarget;
         stakeTarget = _stakeTarget;
-        emit SetStakeTarget(oldTarget, stakeTarget);
+        emit SetStakeTarget(
+            oldTarget,
+            stakeTarget
+            );
     }
 
     /// @notice Called by the DAO Agent to set the maximum APR
@@ -34,7 +37,10 @@ contract GovernanceUtils is TimelockUtils, IGovernanceUtils {
         require(_maxApr >= minApr, "Invalid value");
         uint256 oldMax = maxApr;
         maxApr = _maxApr;
-        emit SetMaxApr(oldMax, maxApr);
+        emit SetMaxApr(
+            oldMax,
+            maxApr
+            );
     }
 
     /// @notice Called by the DAO Agent to set the minimum APR
@@ -47,7 +53,10 @@ contract GovernanceUtils is TimelockUtils, IGovernanceUtils {
         require(_minApr <= maxApr, "Invalid value");
         uint256 oldMin = minApr;
         minApr = _minApr;
-        emit SetMinApr(oldMin, minApr);
+        emit SetMinApr(
+            oldMin,
+            minApr
+            );
     }
 
     /// @notice Called by the DAO Agent to set the unstake waiting period
@@ -66,7 +75,10 @@ contract GovernanceUtils is TimelockUtils, IGovernanceUtils {
         require(_unstakeWaitPeriod <= 7776000 && _unstakeWaitPeriod >= epochLength, "Invalid value");
         uint256 oldPeriod = unstakeWaitPeriod;
         unstakeWaitPeriod = _unstakeWaitPeriod;
-        emit SetUnstakeWaitPeriod(oldPeriod, unstakeWaitPeriod);
+        emit SetUnstakeWaitPeriod(
+            oldPeriod,
+            unstakeWaitPeriod
+            );
     }
 
     /// @notice Called by the DAO Agent to set the APR update coefficient
@@ -79,6 +91,9 @@ contract GovernanceUtils is TimelockUtils, IGovernanceUtils {
         require(_aprUpdateCoeff < 1000000000 && _aprUpdateCoeff > 0, "Invalid value");
         uint256 oldCoeff = aprUpdateCoeff;
         aprUpdateCoeff = _aprUpdateCoeff;
-        emit SetAprUpdateCoefficient(oldCoeff, aprUpdateCoeff);
+        emit SetAprUpdateCoefficient(
+            oldCoeff,
+            aprUpdateCoeff
+            );
     }
 }

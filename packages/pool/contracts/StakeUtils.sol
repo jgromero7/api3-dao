@@ -26,11 +26,23 @@ contract StakeUtils is TransferUtils, IStakeUtils {
         uint256 totalStakedNow = getValue(totalStaked);
         uint256 sharesToMint = totalSharesNow.mul(amount).div(totalStakedNow);
         uint256 userSharesNow = getValue(user.shares);
-        user.shares.push(Checkpoint(block.number, userSharesNow.add(sharesToMint)));      
-        totalShares.push(Checkpoint(block.number, totalSharesNow.add(sharesToMint)));
-        totalStaked.push(Checkpoint(block.number, totalStakedNow.add(amount)));
-        updateDelegatedUserShares(sharesToMint, true);
-        emit Staked(msg.sender, amount);
+        user.shares.push(Checkpoint({
+            fromBlock: block.number,
+            value: userSharesNow.add(sharesToMint)
+            }));      
+        totalShares.push(Checkpoint({
+            fromBlock: block.number,
+            value: totalSharesNow.add(sharesToMint)
+            }));
+        totalStaked.push(Checkpoint({
+            fromBlock: block.number,
+            value: totalStakedNow.add(amount)
+            }));
+        updateDelegatedVotingPower(sharesToMint, true);
+        emit Staked(
+            msg.sender,
+            amount
+            );
     }
 
     /// @notice Convenience method to deposit and stake in a single transaction
@@ -86,9 +98,15 @@ contract StakeUtils is TransferUtils, IStakeUtils {
             // The reward gets redistributed to the current stakers
             userSharesNow = userSharesNow.sub(sharesToBurn);
             totalSharesNow = totalSharesNow.sub(sharesToBurn);
-            user.shares.push(Checkpoint(block.number, userSharesNow));
-            totalShares.push(Checkpoint(block.number, totalSharesNow));
-            updateDelegatedUserShares(sharesToBurn, false);
+            user.shares.push(Checkpoint({
+                fromBlock: block.number,
+                value: userSharesNow
+                }));
+            totalShares.push(Checkpoint({
+                fromBlock: block.number,
+                value: totalSharesNow
+                }));
+            updateDelegatedVotingPower(sharesToBurn, false);
             // Also revert the token lock. Note that this is only an
             // approximation. The user's `locked` may be 0 here due to it
             // not have been updated yet, in which case this will not help (yet
@@ -102,7 +120,11 @@ contract StakeUtils is TransferUtils, IStakeUtils {
         }
         user.unstakeScheduledFor = now.add(unstakeWaitPeriod);
         user.unstakeAmount = amount;
-        emit ScheduledUnstake(msg.sender, amount, user.unstakeScheduledFor);
+        emit ScheduledUnstake(
+            msg.sender,
+            amount,
+            user.unstakeScheduledFor
+            );
     }
 
     /// @notice Called to execute a pre-scheduled unstake
@@ -129,15 +151,27 @@ contract StakeUtils is TransferUtils, IStakeUtils {
             amount = sharesToBurn.mul(totalStakedNow).div(totalSharesNow);
         }
         user.unstaked = user.unstaked.add(amount);
-        user.shares.push(Checkpoint(block.number, userSharesNow.sub(sharesToBurn)));
-        totalShares.push(Checkpoint(block.number, totalSharesNow.sub(sharesToBurn)));
-        updateDelegatedUserShares(sharesToBurn, false);
+        user.shares.push(Checkpoint({
+            fromBlock: block.number,
+            value: userSharesNow.sub(sharesToBurn)
+            }));
+        totalShares.push(Checkpoint({
+            fromBlock: block.number,
+            value: totalSharesNow.sub(sharesToBurn)
+            }));
+        updateDelegatedVotingPower(sharesToBurn, false);
 
         uint256 newTotalStaked = totalStakedNow > amount ? totalStakedNow.sub(amount) : 0;
-        totalStaked.push(Checkpoint(block.number, newTotalStaked));
+        totalStaked.push(Checkpoint({
+            fromBlock: block.number,
+            value: newTotalStaked
+            }));
         user.unstakeScheduledFor = 0;
         user.unstakeAmount = 0;
-        emit Unstaked(msg.sender, amount);
+        emit Unstaked(
+            msg.sender,
+            amount
+            );
         return amount;
     }
 

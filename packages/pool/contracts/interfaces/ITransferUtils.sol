@@ -9,7 +9,7 @@ interface ITransferUtils is IDelegationUtils{
         uint256 amount
         );
 
-    event Withdrew(
+    event Withdrawn(
         address indexed user,
         address indexed destination,
         uint256 amount

@@ -18,7 +18,7 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
         external
         override
     {
-        require(delegate != address(0) && delegate != msg.sender, "Invalid target");
+        require(delegate != address(0) && delegate != msg.sender, "Invalid address");
         // Delegating users have cannot use their voting power, so we are
         // verifying that the delegate is not currently delegating. However,
         // the delegate may delegate after they have been delegated to.
@@ -27,25 +27,36 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
         User storage user = users[msg.sender];
         uint256 userShares = getValue(user.shares);
         address userDelegate = getAddress(user.delegates);
+        if (userDelegate == delegate) {
+            return;
+        }
         if (userDelegate != address(0)) {
-            if (userDelegate == delegate) {
-                return;
-            } else {
-                // Need to revoke previous delegation
-                User storage prevDelegate = users[userDelegate];
-                prevDelegate.delegatedTo.push(
-                    Checkpoint(block.number, getValue(prevDelegate.delegatedTo).sub(userShares))
-                );
-            }
+            // Need to revoke previous delegation
+            User storage prevDelegate = users[userDelegate];
+            prevDelegate.delegatedTo.push(
+                Checkpoint({
+                    fromBlock: block.number,
+                    value: getValue(prevDelegate.delegatedTo).sub(userShares)
+                    })
+            );
         }
         // Assign the new delegation
         User storage _delegate = users[delegate];
         _delegate.delegatedTo.push(
-            Checkpoint(block.number, getValue(_delegate.delegatedTo).add(userShares))
+            Checkpoint({
+                fromBlock: block.number,
+                value: getValue(_delegate.delegatedTo).add(userShares)
+                })
         );
         // Record the new delegate for the user
-        user.delegates.push(AddressCheckpoint(block.number, delegate));
-        emit Delegated(msg.sender, delegate);
+        user.delegates.push(AddressCheckpoint({
+            fromBlock: block.number,
+            _address: delegate
+            }));
+        emit Delegated(
+            msg.sender,
+            delegate
+            );
     }
 
     /// @notice Called by the user to undelegate voting power
@@ -60,10 +71,19 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
         uint256 userShares = getValue(user.shares);
         User storage delegate = users[userDelegate];
         delegate.delegatedTo.push(
-            Checkpoint(block.number, getValue(delegate.delegatedTo).sub(userShares))
+            Checkpoint({
+                fromBlock: block.number,
+                value: getValue(delegate.delegatedTo).sub(userShares)
+                })
         );
-        user.delegates.push(AddressCheckpoint(block.number, address(0)));
-        emit Undelegated(msg.sender, userDelegate);
+        user.delegates.push(AddressCheckpoint({
+            fromBlock: block.number,
+            _address: address(0)
+            }));
+        emit Undelegated(
+            msg.sender,
+            userDelegate
+            );
     }
 
     /// @notice Called internally when the user shares are updated to update
@@ -73,7 +93,7 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
     /// @param shares Amount of shares that will be added/removed
     /// @param delta Whether the shares will be added/removed (add for `true`,
     /// and vice versa)
-    function updateDelegatedUserShares(
+    function updateDelegatedVotingPower(
         uint256 shares,
         bool delta
         )
@@ -96,8 +116,9 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
         } else {
             newDelegatedTo = currentlyDelegatedTo > shares ? currentlyDelegatedTo.sub(shares) : 0;
         }
-        delegate.delegatedTo.push(
-            Checkpoint(block.number, newDelegatedTo)
-        );
+        delegate.delegatedTo.push(Checkpoint({
+            fromBlock: block.number,
+            value: newDelegatedTo
+            }));
     }
 }

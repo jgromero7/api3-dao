@@ -28,8 +28,14 @@ contract ClaimUtils is StakeUtils, IClaimUtils {
     {
         uint256 totalStakedNow = getValue(totalStaked);
         uint256 totalStakedAfter = totalStakedNow > amount ? totalStakedNow.sub(amount) : 1;
-        totalStaked.push(Checkpoint(block.number, totalStakedAfter));
+        totalStaked.push(Checkpoint({
+            fromBlock: block.number,
+            value: totalStakedAfter
+            }));
         api3Token.transfer(msg.sender, amount);
-        emit ClaimPayout(block.number, amount);
+        emit ClaimPayout(
+            block.number,
+            amount
+            );
     }
 }

@@ -11,8 +11,8 @@ import "./interfaces/IApi3Pool.sol";
 /// weekly rewards that get unlocked after a year, and staked funds are used to
 /// collateralize an insurance product that is outside the scope of this
 /// contract.
-/// @dev The different functionalities of the contract are distributed to files
-/// that are inherited as a chain:
+/// @dev Functionalities of the contract are distributed to files that form a
+/// chain of inheritance:
 /// (1) Api3Pool.sol
 /// (2) GovernanceUtils.sol
 /// (3) TimelockUtils.sol

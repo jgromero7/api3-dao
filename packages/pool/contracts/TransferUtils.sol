@@ -12,7 +12,7 @@ contract TransferUtils is DelegationUtils, ITransferUtils {
         public
     {}
 
-    /// @notice Called to deposit tokens for a beneficiary
+    /// @notice Called to deposit tokens for a user by using `transferFrom()`
     /// @dev This method is used by `TimelockManager.sol`
     /// @param source Token transfer source
     /// @param amount Amount to be deposited
@@ -27,7 +27,10 @@ contract TransferUtils is DelegationUtils, ITransferUtils {
     {
         users[userAddress].unstaked = users[userAddress].unstaked.add(amount);
         api3Token.transferFrom(source, address(this), amount);
-        emit Deposited(userAddress, amount);
+        emit Deposited(
+            userAddress,
+            amount
+            );
     }
 
     /// @notice Called to withdraw tokens
@@ -56,6 +59,9 @@ contract TransferUtils is DelegationUtils, ITransferUtils {
         // Carry on with the withdrawal
         user.unstaked = user.unstaked.sub(amount);
         api3Token.transfer(destination, amount);
-        emit Withdrew(msg.sender, destination, amount);
+        emit Withdrawn(msg.sender,
+            destination,
+            amount
+            );
     }
 }

@@ -3,6 +3,7 @@ pragma solidity 0.6.12;
 
 import "./TimelockUtils.sol";
 
+/// @title Contract that implements governance of DAO parameters
 contract GovernanceUtils is TimelockUtils {
     /// @param api3TokenAddress API3 token contract address
     constructor(address api3TokenAddress)
@@ -10,67 +11,102 @@ contract GovernanceUtils is TimelockUtils {
         public
     {}
 
-    event NewStakeTarget(uint256 oldTarget, uint256 newTarget);
-    event NewMaxApr(uint256 oldMax, uint256 newMax);
-    event NewMinApr(uint256 oldMin, uint256 newMin);
-    event NewUnstakeWaitPeriod(uint256 oldPeriod, uint256 newPeriod);
-    event NewUpdateCoefficient(uint256 oldCoeff, uint256 newCoeff);
-    event ClaimsManagerStatusSet(address claimsManager, bool status);
+    event SetStakeTarget(
+        uint256 oldTarget,
+        uint256 newTarget
+        );
 
+    event SetMaxApr(
+        uint256 oldMax,
+        uint256 newMax
+        );
+
+    event SetMinApr(
+        uint256 oldMin,
+        uint256 newMin
+        );
+
+    event SetUnstakeWaitPeriod(
+        uint256 oldPeriod,
+        uint256 newPeriod
+        );
+
+    event SetAprUpdateCoefficient(
+        uint256 oldCoeff,
+        uint256 newCoeff
+        );
+
+    event SetClaimsManagerStatus(
+        address claimsManager,
+        bool status
+        );
+
+    /// @notice Called by the DAO Agent to set the stake target
+    /// @param _stakeTarget Stake target
     function setStakeTarget(uint256 _stakeTarget)
-        external payEpochRewardAfter()
-        //onlyDao
+        external
+        payEpochRewardAfter()
+        onlyDaoAgent()
     {
         uint256 oldTarget = stakeTarget;
         stakeTarget = _stakeTarget;
-        emit NewStakeTarget(oldTarget, stakeTarget);
+        emit SetStakeTarget(oldTarget, stakeTarget);
     }
 
+    /// @notice Called by the DAO Agent to set the maximum APR
+    /// @param _maxApr Maximum APR
     function setMaxApr(uint256 _maxApr)
-        external payEpochRewardAfter()
-        //onlyDao
+        external
+        payEpochRewardAfter()
+        onlyDaoAgent()
     {
         require(_maxApr >= minApr, "Invalid value");
         uint256 oldMax = maxApr;
         maxApr = _maxApr;
-        emit NewMaxApr(oldMax, maxApr);
+        emit SetMaxApr(oldMax, maxApr);
     }
 
+    /// @notice Called by the DAO Agent to set the minimum APR
+    /// @param _minApr Minimum APR
     function setMinApr(uint256 _minApr)
-        external payEpochRewardAfter()
-        //onlyDao
+        external
+        payEpochRewardAfter()
+        onlyDaoAgent()
     {
         require(_minApr <= maxApr, "Invalid value");
         uint256 oldMin = minApr;
         minApr = _minApr;
-        emit NewMinApr(oldMin, minApr);
+        emit SetMinApr(oldMin, minApr);
     }
 
+    /// @notice Called by the DAO Agent to set the unstake waiting period
+    /// @dev This may want to be increased to provide more time for insurance
+    /// claims to be resolved.
+    /// Even when the insurance functionality is not implemented, the minimum
+    /// valid value is `epochLength` to prevent against users unstaking,
+    /// withdrawing and staking with another address to work around proposal
+    /// spam protection.
+    /// @param _unstakeWaitPeriod Minimum APR
     function setUnstakeWaitPeriod(uint256 _unstakeWaitPeriod)
         external
-        //onlyDao
+        onlyDaoAgent()
     {
-        require(_unstakeWaitPeriod <= 7776000 && _unstakeWaitPeriod >= 604800, "Invalid value");
+        require(_unstakeWaitPeriod <= 7776000 && _unstakeWaitPeriod >= epochLength, "Invalid value");
         uint256 oldPeriod = unstakeWaitPeriod;
         unstakeWaitPeriod = _unstakeWaitPeriod;
-        emit NewUnstakeWaitPeriod(oldPeriod, unstakeWaitPeriod);
+        emit SetUnstakeWaitPeriod(oldPeriod, unstakeWaitPeriod);
     }
 
-    function setUpdateCoefficient(uint256 _updateCoeff)
-        external payEpochRewardAfter()
-        //onlyDao
-    {
-        require(_updateCoeff < 1000000000 && _updateCoeff > 0, "Invalid value");
-        uint256 oldCoeff = updateCoeff;
-        updateCoeff = _updateCoeff;
-        emit NewUpdateCoefficient(oldCoeff, updateCoeff);
-    }
-
-    function setClaimsManagerStatus(address claimsManager, bool status)
+    /// @notice Called by the DAO Agent to set the APR update coefficient
+    /// @param _aprUpdateCoeff APR update coefficient
+    function setUpdateCoefficient(uint256 _aprUpdateCoeff)
         external
-        //onlyDao
+        payEpochRewardAfter()
+        onlyDaoAgent()
     {
-        claimsManagerStatus[claimsManager] = status;
-        emit ClaimsManagerStatusSet(claimsManager, status);
+        require(_aprUpdateCoeff < 1000000000 && _aprUpdateCoeff > 0, "Invalid value");
+        uint256 oldCoeff = aprUpdateCoeff;
+        aprUpdateCoeff = _aprUpdateCoeff;
+        emit SetAprUpdateCoefficient(oldCoeff, aprUpdateCoeff);
     }
 }

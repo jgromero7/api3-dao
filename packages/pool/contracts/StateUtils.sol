@@ -85,7 +85,6 @@ contract StateUtils {
     /// @notice Total number of shares at the pool, kept in checkpoints
     Checkpoint[] public totalShares;
 
-    
     // All percentage values are represented by multiplying by 1e6
     uint256 internal constant onePercent = 1_000_000;
     uint256 internal constant hundredPercent = 100_000_000;
@@ -112,7 +111,7 @@ contract StateUtils {
     /// @dev Since this is a coefficient, it has no unit. A coefficient of 1e6
     /// means 1% deviation from the stake target results in 1% update in APR.
     /// This parameter is governable by the DAO.
-    uint256 public updateCoeff = 1_000_000;
+    uint256 public aprUpdateCoeff = 1_000_000;
 
     /// @notice Users need to schedule an unstaking and wait for
     /// `unstakeWaitPeriod` before being able to unstake. This is to prevent
@@ -141,6 +140,11 @@ contract StateUtils {
 
     event SetDaoAgent(address daoAgent);
 
+    event SetClaimsManagerStatus(
+        address claimsManager,
+        bool status
+        );
+
     /// @dev Pays the epoch reward before the modified function
     modifier payEpochRewardBefore {
         payReward();
@@ -154,15 +158,15 @@ contract StateUtils {
         payReward();
     }
 
-    /// @dev Reverts if the caller is not the claims manager
-    modifier onlyClaimsManager() {
-        require(claimsManagerStatus[msg.sender], "Unauthorized");
-        _;
-    }
-
     /// @dev Reverts if the caller is not the DAO Agent App
     modifier onlyDaoAgent() {
         require(msg.sender == daoAgent, "Unauthorized");
+        _;
+    }
+
+    /// @dev Reverts if the caller is not the claims manager
+    modifier onlyClaimsManager() {
+        require(claimsManagerStatus[msg.sender], "Unauthorized");
         _;
     }
 
@@ -202,6 +206,19 @@ contract StateUtils {
         emit SetDaoAgent(daoAgent);
     }
 
+    /// @notice Called by the DAO Agent to set the authorization status of a
+    /// claims manager contract
+    /// @dev The claims manager is a trusted contract that is allowed to
+    /// withdraw as many tokens as it wants from the pool to pay out insurance
+    /// claims.
+    function setClaimsManagerStatus(address claimsManager, bool status)
+        external
+        onlyDaoAgent()
+    {
+        claimsManagerStatus[claimsManager] = status;
+        emit SetClaimsManagerStatus(claimsManager, status);
+    }
+
     /// @notice Updates the current APR before paying the reward
     /// @param totalStakedNow Total number of tokens staked at the pool now
     function updateCurrentApr(uint256 totalStakedNow)
@@ -217,7 +234,7 @@ contract StateUtils {
         uint256 deltaPercentage = deltaAbsolute.mul(hundredPercent).div(stakeTarget);
         // Use the update coefficient to calculate what % we need to update
         // the APR with
-        uint256 aprUpdate = deltaPercentage.mul(updateCoeff).div(onePercent);
+        uint256 aprUpdate = deltaPercentage.mul(aprUpdateCoeff).div(onePercent);
 
         uint256 newApr;
         if (totalStakedNow < stakeTarget) {

@@ -18,7 +18,7 @@ contract ClaimUtils is StakeUtils {
 
     /// @notice Called by a claims manager to pay out an insurance claim
     /// @dev The claims manager is a trusted contract that is allowed to
-    /// withdraw as many tokens as it wants from the pool to pay our insurance
+    /// withdraw as many tokens as it wants from the pool to pay out insurance
     /// claims. Any kind of limiting logic (e.g., maximum amount of tokens that
     /// can be withdrawn) is implemented at its end and is out of the scope of
     /// this contract.

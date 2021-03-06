@@ -3,7 +3,7 @@ pragma solidity 0.6.12;
 
 import "./TransferUtils.sol";
 
-/// @title Contract that implements the staking functionality
+/// @title Contract that implements staking functionality
 contract StakeUtils is TransferUtils {
     /// @param api3TokenAddress API3 token contract address
     constructor(address api3TokenAddress)
@@ -157,3 +157,4 @@ contract StakeUtils is TransferUtils {
         uint256 unstaked = unstake();
         withdraw(destination, unstaked);
     }
+}

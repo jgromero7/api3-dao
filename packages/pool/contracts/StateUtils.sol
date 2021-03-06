@@ -124,6 +124,11 @@ contract StateUtils is IStateUtils {
     /// to set this large enough to allow insurance claims to be resolved.
     uint256 public unstakeWaitPeriod = epochLength;
 
+    /// @notice Minimum voting power the users must have to be able to make
+    /// proposals (in percentages)
+    /// @dev Delegations count towards voting power
+    uint256 public proposalVotingPowerThreshold = 100_000;
+
     /// @notice APR that will be paid next epoch
     /// @dev This is initialized at maximum APR, but will come to an
     /// equilibrium based on the stake target.

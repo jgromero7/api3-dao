@@ -88,12 +88,30 @@ contract GovernanceUtils is TimelockUtils, IGovernanceUtils {
         override
         onlyDaoAgent()
     {
-        require(_aprUpdateCoeff < 1000000000 && _aprUpdateCoeff > 0, "Invalid value");
+        require(_aprUpdateCoeff < 1_000_000_000 && _aprUpdateCoeff > 0, "Invalid value");
         uint256 oldCoeff = aprUpdateCoeff;
         aprUpdateCoeff = _aprUpdateCoeff;
         emit SetAprUpdateCoefficient(
             oldCoeff,
             aprUpdateCoeff
+            );
+    }
+
+    /// @notice Called by the DAO Agent to set the voting power threshold for
+    /// proposals
+    /// @param _proposalVotingPowerThreshold Voting power threshold for
+    /// proposals
+    function setProposalVotingPowerThreshold(uint256 _proposalVotingPowerThreshold)
+        external
+        override
+        onlyDaoAgent()
+    {
+        require(_proposalVotingPowerThreshold <= 100_000_000 && _proposalVotingPowerThreshold >= 0, "Invalid value");
+        uint256 oldProposalVotingPowerThreshold = proposalVotingPowerThreshold;
+        proposalVotingPowerThreshold = _proposalVotingPowerThreshold;
+        emit SetProposalVotingPowerThreshold(
+            oldProposalVotingPowerThreshold,
+            proposalVotingPowerThreshold
             );
     }
 

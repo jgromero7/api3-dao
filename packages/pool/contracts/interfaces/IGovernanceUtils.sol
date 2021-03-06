@@ -34,6 +34,11 @@ interface IGovernanceUtils is ITimelockUtils {
         bool status
         );
 
+    event SetProposalVotingPowerThreshold(
+        uint256 oldProposalVotingPowerThreshold,
+        uint256 newProposalVotingPowerThreshold
+        );
+
     event PublishedSpecsUrl(
         uint256 proposalIndex,
         address userAddress,
@@ -53,6 +58,9 @@ interface IGovernanceUtils is ITimelockUtils {
         external;
 
     function setUpdateCoefficient(uint256 _aprUpdateCoeff)
+        external;
+
+    function setProposalVotingPowerThreshold(uint256 _proposalVotingPowerThreshold)
         external;
 
     function publishSpecsUrl(

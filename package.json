@@ -1,14 +1,11 @@
 {
   "name": "api3-dao",
-  "version": "1.0.0",
+  "license": "MIT",
+  "version": "0.1.0",
   "scripts": {
-    "start": "yarn start:serve",
-    "start:serve": "serve -s ./packages/ui/build",
-    "start:ui": "cd packages/ui && yarn start",
-    "ui": "yarn start:ui",
-    "ui:build": "cd packages/ui && yarn build"
+    "bootstrap": "npm install && lerna bootstrap"
   },
-  "dependencies": {
-    "serve": "11.3.2"
+  "devDependencies": {
+    "lerna": "^4.0.0"
   }
 }

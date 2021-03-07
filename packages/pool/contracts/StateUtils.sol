@@ -1,303 +1,354 @@
 //SPDX-License-Identifier: MIT
 pragma solidity 0.6.12;
 
+import "@openzeppelin/contracts/math/SafeMath.sol";
 import "./auxiliary/interfaces/IApi3Token.sol";
-import "./auxiliary/SafeMath.sol";
-import "hardhat/console.sol";
+import "./interfaces/IStateUtils.sol";
 
-contract StateUtils {
+/// @title Contract that keeps state variables
+contract StateUtils is IStateUtils {
     using SafeMath for uint256;
+
     struct Checkpoint {
         uint256 fromBlock;
         uint256 value;
     }
 
-    struct RewardEpoch {
-        uint256 amount;
-        uint256 atBlock;
+    struct AddressCheckpoint {
+        uint256 fromBlock;
+        address _address;
     }
 
-    struct Delegation {
-        uint256 fromBlock;
-        address delegate;
+    struct Reward {
+        uint256 atBlock;
+        uint256 amount;
     }
 
     struct User {
         uint256 unstaked;
-        Checkpoint[] shares;
         uint256 locked;
         uint256 vesting;
-        Delegation[] delegates;
+        Checkpoint[] shares;
+        AddressCheckpoint[] delegates;
         Checkpoint[] delegatedTo;
+        uint256 lastDelegationUpdateTimestamp;
         uint256 unstakeScheduledFor;
         uint256 unstakeAmount;
-        mapping(uint256 => bool) revokedEpochReward;
+        mapping(uint256 => bool) epochIndexToRewardRevocationStatus;
         uint256 lastUpdateEpoch;
         uint256 oldestLockedEpoch;
     }
 
-    IApi3Token internal api3Token;
+    string constant ERROR_UNAUTHORIZED = "Unauthorized";
+    string constant ERROR_ADDRESS = "Invalid address";
+    string constant ERROR_VALUE = "Invalid value";
 
-    //1 week in seconds
-    uint256 public constant rewardEpochLength = 604800;
-    //1 year in epochs
+    /// @notice API3 token contract
+    IApi3Token public api3Token;
+
+    /// @notice Address of the Agent app of the API3 DAO
+    /// @dev Since the pool contract will be deployed before the DAO contracts,
+    /// `daoAgent` will not be set in the constructor, but later on. Once it is
+    /// set, it will be immutable.
+    address public daoAgent;
+
+    /// @notice Mapping that keeps the claims manager statuses of addresses
+    /// @dev A claims manager is a contract that is authorized to pay out
+    /// claims from the staking pool, effectively slashing the stakers. The
+    /// statuses are kept as a mapping to support multiple claims managers.
+    mapping(address => bool) public claimsManagerStatus;
+
+    /// @notice Length of the epoch in which the staking reward is paid out
+    /// once. It is hardcoded as 7 days in seconds.
+    /// @dev In addition to regulating reward payments, this variable is used
+    /// for three additional things:
+    /// (1) Once an unstaking scheduling matures, the user has `epochLength`
+    /// to execute the unstaking before it expires
+    /// (2) After a user makes a proposal, they cannot make a second one
+    /// before `epochLength` has passed
+    /// (3) After a user updates their delegation status, they have to wait
+    /// `epochLength` before updating it again
+    uint256 public constant epochLength = 7 * 24 * 60 * 60;
+
+    /// @notice Number of epochs before the staking rewards get unlocked.
+    /// Hardcoded as 52 epochs, which corresponds to a year.
     uint256 public constant rewardVestingPeriod = 52;
+
+    /// @notice Epochs are indexed as `now / epochLength`. `genesisEpoch` is
+    /// the index of the epoch in which the pool is deployed.
     uint256 public immutable genesisEpoch;
 
+    /// @notice Records of rewards paid in each epoch
+    mapping(uint256 => Reward) public epochIndexToReward;
+
+    /// @notice Epoch index of the most recent reward payment
+    uint256 public epochIndexOfLastRewardPayment;
+
+    /// @notice User records
     mapping(address => User) public users;
-    
-    Checkpoint[] public totalShares;
+
+    /// @notice Total number of tokens staked at the pool, kept in checkpoints
     Checkpoint[] public totalStaked;
 
-    mapping(uint256 => RewardEpoch) public rewards;
-    uint256 public lastEpochPaid;
+    /// @notice Total number of shares at the pool, kept in checkpoints
+    Checkpoint[] public totalShares;
 
-    uint256 public minApr = 2500000;
-    uint256 public maxApr = 75000000;
-    uint256 public stakeTarget = 10e6 ether;
-    uint256 public updateCoeff = 1000000;
-    uint256 public unstakeWaitPeriod = rewardEpochLength;
+    // All percentage values are represented by multiplying by 1e6
+    uint256 internal constant onePercent = 1_000_000;
+    uint256 internal constant hundredPercent = 100_000_000;
 
-    uint256 public currentApr = minApr;
+    /// @notice Stake target the pool will aim to meet. The staking rewards
+    /// increase if the total staked amount is below this, and vice versa.
+    /// @dev Unit is API3 tokens. Since API3 `decimals` is 18, `ether` is used
+    /// here. Default target is 30 million tokens. This parameter is governable
+    /// by the DAO.
+    uint256 public stakeTarget = 30_000_000 ether;
 
-    address public claimsManager;
+    /// @notice Minimum APR (annual percentage rate) the pool will pay as
+    /// staking rewards in percentages
+    /// @dev Default value is 2.5%. This parameter is governable by the DAO.
+    uint256 public minApr = 2_500_000;
 
-    uint256 internal constant onePercent = 1000000;
-    uint256 internal constant hundredPercent = 100000000;
+    /// @notice Maximum APR (annual percentage rate) the pool will pay as
+    /// staking rewards in percentages
+    /// @dev Default value is 75%. This parameter is governable by the DAO.
+    uint256 public maxApr = 75_000_000;
 
-    event Epoch(uint256 indexed epoch, uint256 rewardAmount, uint256 newApr);
-    event UserUpdate(address indexed user, uint256 toEpoch, uint256 locked);
+    /// @notice Coefficient that represents how aggresively the APR will be
+    /// updated to meet the stake target.
+    /// @dev Since this is a coefficient, it has no unit. A coefficient of 1e6
+    /// means 1% deviation from the stake target results in 1% update in APR.
+    /// This parameter is governable by the DAO.
+    uint256 public aprUpdateCoefficient = 1_000_000;
 
-    modifier triggerEpochBefore {
-        uint256 targetEpoch = getRewardTargetEpoch();
-        payReward(targetEpoch);
+    /// @notice Users need to schedule an unstake and wait for
+    /// `unstakeWaitPeriod` before being able to unstake. This is to prevent
+    /// the stakers from frontrunning insurance claims by unstaking to evade
+    /// them, or repeatedly unstake/stake to work around the proposal spam
+    /// protection.
+    /// @dev This parameter is governable by the DAO, and the DAO is expected
+    /// to set this to a value that is large enough to allow insurance claims
+    /// to be resolved.
+    uint256 public unstakeWaitPeriod = epochLength;
+
+    /// @notice Minimum voting power the users must have to be able to make
+    /// proposals (in percentages)
+    /// @dev Delegations count towards voting power.
+    /// Default value is 0.1%. This parameter is governable by the DAO.
+    uint256 public proposalVotingPowerThreshold = 100_000;
+
+    /// @notice APR that will be paid next epoch
+    /// @dev This is initialized at maximum APR, but will come to an
+    /// equilibrium based on the stake target.
+    /// Every epoch (week), APR/52 of the total staked tokens will be added to
+    /// the pool, effectively distributing them to the stakers.
+    uint256 public currentApr = maxApr;
+
+    /// @notice Mapping that keeps the specs of a proposal provided by a user
+    /// @dev After making a proposal through the Agent app, the user publishes
+    /// the specs of the proposal (target contract address, function,
+    /// parameters) at a URL
+    mapping(address => mapping(uint256 => string)) public userAddressToProposalIndexToSpecsUrl;
+
+    /// @dev Reverts if the caller is not the DAO Agent App
+    modifier onlyDaoAgent() {
+        require(msg.sender == daoAgent, ERROR_UNAUTHORIZED);
         _;
     }
 
-    modifier triggerEpochAfter {
-        _;
-        uint256 targetEpoch = getRewardTargetEpoch();
-        payReward(targetEpoch);
-    }
-
-    modifier onlyClaimsManager(address caller) {
-        require(caller == claimsManager, "Unauthorized");
-        _;
-    }
-
-    // modifier onlyDao(address caller) {
-    //     require(caller == address(daoAgent));
-    //     _;
-    // }
-    
+    /// @param api3TokenAddress API3 token contract address
     constructor(address api3TokenAddress)
         public
     {
-        totalShares.push(Checkpoint(block.number, 1));
-        totalStaked.push(Checkpoint(block.number, 1));
         api3Token = IApi3Token(api3TokenAddress);
-        genesisEpoch = now.div(rewardEpochLength);
-        lastEpochPaid = now.div(rewardEpochLength);
-        rewards[now.div(rewardEpochLength)] = RewardEpoch(0, block.number);
+        // Initialize the share price at 1
+        totalShares.push(Checkpoint({
+            fromBlock: block.number,
+            value: 1
+            }));
+        totalStaked.push(Checkpoint({
+            fromBlock: block.number,
+            value: 1
+            }));
+        // Set the current epoch as the genesis epoch and skip its reward
+        // payment
+        uint256 currentEpoch = now.div(epochLength);
+        genesisEpoch = currentEpoch;
+        epochIndexOfLastRewardPayment = currentEpoch;
     }
 
-    function updateCurrentApr(uint256 totalStakedNow)
-        internal
+    /// @notice Called after deployment to set the address of the DAO Agent app
+    /// @dev The DAO Agent app will be authorized to act on behalf of the DAO
+    /// to update parameters, which is why we need to specify it. However, the
+    /// pool and the DAO contracts refer to each other cyclically, which is why
+    /// we cannot set it in the constructor. Instead, the pool will be
+    /// deployed, the DAO contracts will be deployed with the pool address as
+    /// a constructor argument, then this method will be called to set the DAO
+    /// Agent address. Before using the resulting setup, it must be verified
+    /// that the Agent address is set correctly.
+    /// This method can set the DAO Agent only once. Therefore, no access
+    /// control is needed.
+    /// @param _daoAgent Address of the Agent app of the API3 DAO
+    function setDaoAgent(address _daoAgent)
+        external
+        override
     {
-        if (stakeTarget == 0) {
-            currentApr = minApr;
-            return;
-        }
-
-        uint256 deltaAbsolute = totalStakedNow < stakeTarget 
-            ? stakeTarget.sub(totalStakedNow) : totalStakedNow.sub(stakeTarget);
-        uint256 deltaPercentage = deltaAbsolute.mul(hundredPercent).div(stakeTarget);
-        
-        uint256 aprUpdate = deltaPercentage.mul(updateCoeff).div(onePercent);
-
-        uint256 newApr;
-        if (totalStakedNow < stakeTarget) {
-            newApr = currentApr.mul(hundredPercent.add(aprUpdate)).div(hundredPercent);
-        }
-        else {
-            newApr = hundredPercent > aprUpdate
-                ? currentApr.mul(hundredPercent.sub(aprUpdate)).div(hundredPercent)
-                : 0;
-        }
-
-        if (newApr < minApr) {
-            currentApr = minApr;
-        }
-        else if (newApr > maxApr) {
-            currentApr = maxApr;
-        }
-        else {
-            currentApr = newApr;
-        }
+        require(_daoAgent != address(0), ERROR_ADDRESS);
+        require(daoAgent == address(0), ERROR_UNAUTHORIZED);
+        daoAgent = _daoAgent;
+        emit SetDaoAgent(daoAgent);
     }
 
-    function payReward(uint256 targetEpoch)
-        public
+    /// @notice Called by the DAO Agent to set the authorization status of a
+    /// claims manager contract
+    /// @dev The claims manager is a trusted contract that is allowed to
+    /// withdraw as many tokens as it wants from the pool to pay out insurance
+    /// claims.
+    /// @param claimsManager Claims manager contract address
+    /// @param status Authorization status
+    function setClaimsManagerStatus(
+        address claimsManager,
+        bool status
+        )
+        external
+        override
+        onlyDaoAgent()
     {
-        require(targetEpoch <= now.div(rewardEpochLength));
-        
-        if (lastEpochPaid < targetEpoch) {
-            uint256 epochToPay = lastEpochPaid.add(1);
-            uint256 totalStakedNow = getValue(totalStaked);
-
-            bool minted = false;
-            while (epochToPay <= targetEpoch) {
-                if (!api3Token.getMinterStatus(address(this))) {
-                    rewards[epochToPay] = RewardEpoch(0, block.number);
-                    emit Epoch(epochToPay, 0, currentApr);
-                } else {
-                    updateCurrentApr(totalStakedNow);
-                    uint256 rewardAmount = totalStakedNow.mul(currentApr).div(rewardVestingPeriod).div(hundredPercent);
-                    rewards[epochToPay] = RewardEpoch(rewardAmount, block.number);
-
-                    if (rewardAmount > 0) {
-                        api3Token.mint(address(this), rewardAmount);
-                        totalStakedNow = totalStakedNow.add(rewardAmount);
-                        minted = true;
-                    }
-                    emit Epoch(epochToPay, rewardAmount, currentApr);
-                }
-                epochToPay = epochToPay.add(1);
-            }
-
-            lastEpochPaid = targetEpoch;
-            if (minted) {
-                totalStaked.push(Checkpoint(block.number, totalStakedNow));
-            }
-        }
+        claimsManagerStatus[claimsManager] = status;
+        emit SetClaimsManagerStatus(
+            claimsManager,
+            status
+            );
     }
 
-    function updateUserLocked(address userAddress, uint256 targetEpoch)
-        public
+    /// @notice Called by the DAO Agent to set the stake target
+    /// @param _stakeTarget Stake target
+    function setStakeTarget(uint256 _stakeTarget)
+        external
+        override
+        onlyDaoAgent()
     {
-        uint256 newLocked = getUserLockedAt(userAddress, targetEpoch);
-
-        User storage user = users[userAddress];
-        user.locked = newLocked;
-        user.oldestLockedEpoch = getOldestLockedEpoch();
-        user.lastUpdateEpoch = targetEpoch;
-
-        emit UserUpdate(userAddress, targetEpoch, user.locked);
+        uint256 oldStakeTarget = stakeTarget;
+        stakeTarget = _stakeTarget;
+        emit SetStakeTarget(
+            oldStakeTarget,
+            stakeTarget
+            );
     }
 
-    function getUserLockedAt(address userAddress, uint256 targetEpoch)
-        public triggerEpochBefore returns(uint256)
+    /// @notice Called by the DAO Agent to set the maximum APR
+    /// @param _maxApr Maximum APR
+    function setMaxApr(uint256 _maxApr)
+        external
+        override
+        onlyDaoAgent()
     {
-        uint256 currentEpoch = now.div(rewardEpochLength);
-        uint256 oldestLockedEpoch = getOldestLockedEpoch();
-
-        User storage user = users[userAddress];
-        uint256 lastUpdateEpoch = user.lastUpdateEpoch;
-
-        require(targetEpoch <= currentEpoch
-                && targetEpoch > lastUpdateEpoch
-                && targetEpoch > oldestLockedEpoch,
-                "Invalid target");
-
-        if (lastUpdateEpoch < oldestLockedEpoch) {
-            uint256 locked = 0;
-            for (
-                uint256 ind = oldestLockedEpoch;
-                ind <= targetEpoch;
-                ind = ind.add(1)
-            ) {
-                RewardEpoch storage lockedReward = rewards[ind];
-                uint256 totalSharesThen = getValueAt(totalShares, lockedReward.atBlock);
-                uint256 userSharesThen = getValueAt(user.shares, lockedReward.atBlock);
-                locked = locked.add(lockedReward.amount.mul(userSharesThen).div(totalSharesThen));
-            }
-            return locked;
-        }
-
-        uint256 locked = user.locked;
-        for (
-            uint256 ind = lastUpdateEpoch.add(1);
-            ind <= targetEpoch;
-            ind = ind.add(1)
-        ) {
-            RewardEpoch storage lockedReward = rewards[ind];
-            uint256 totalSharesThen = getValueAt(totalShares, lockedReward.atBlock);
-            uint256 userSharesThen = getValueAt(user.shares, lockedReward.atBlock);
-            locked = locked.add(lockedReward.amount.mul(userSharesThen).div(totalSharesThen));
-        }
-
-        if (targetEpoch >= genesisEpoch.add(rewardVestingPeriod)) {
-            for (
-                uint256 ind = user.oldestLockedEpoch;
-                ind <= oldestLockedEpoch.sub(1);
-                ind = ind.add(1)
-            ) {
-                RewardEpoch storage unlockedReward = rewards[ind.sub(rewardVestingPeriod)];
-                uint256 totalSharesThen = getValueAt(totalShares, unlockedReward.atBlock);
-                uint256 userSharesThen = getValueAt(user.shares, unlockedReward.atBlock);
-                uint256 toUnlock = unlockedReward.amount.mul(userSharesThen).div(totalSharesThen);
-                locked = locked > toUnlock ? locked.sub(toUnlock) : 0;
-            }
-        }
-
-        return locked;
+        require(_maxApr >= minApr, ERROR_VALUE);
+        uint256 oldMaxApr = maxApr;
+        maxApr = _maxApr;
+        emit SetMaxApr(
+            oldMaxApr,
+            maxApr
+            );
     }
 
-    function getUserLocked(address userAddress)
-        external returns(uint256)
+    /// @notice Called by the DAO Agent to set the minimum APR
+    /// @param _minApr Minimum APR
+    function setMinApr(uint256 _minApr)
+        external
+        override
+        onlyDaoAgent()
     {
-        return getUserLockedAt(userAddress, now.div(rewardEpochLength));
+        require(_minApr <= maxApr, ERROR_VALUE);
+        uint256 oldMinApr = minApr;
+        minApr = _minApr;
+        emit SetMinApr(
+            oldMinApr,
+            minApr
+            );
     }
 
-    function getOldestLockedEpoch()
-        internal view returns(uint256)
+    /// @notice Called by the DAO Agent to set the unstake waiting period
+    /// @dev This may want to be increased to provide more time for insurance
+    /// claims to be resolved.
+    /// Even when the insurance functionality is not implemented, the minimum
+    /// valid value is `epochLength` to prevent users from unstaking,
+    /// withdrawing and staking with another address to work around the
+    /// proposal spam protection.
+    /// @param _unstakeWaitPeriod Unstake waiting period
+    function setUnstakeWaitPeriod(uint256 _unstakeWaitPeriod)
+        external
+        override
+        onlyDaoAgent()
     {
-        uint256 currentEpoch = now.div(rewardEpochLength);
-        return currentEpoch >= genesisEpoch.add(rewardVestingPeriod) ?
-                currentEpoch.sub(rewardVestingPeriod) : genesisEpoch;
+        require(_unstakeWaitPeriod >= epochLength, ERROR_VALUE);
+        uint256 oldUnstakeWaitPeriod = unstakeWaitPeriod;
+        unstakeWaitPeriod = _unstakeWaitPeriod;
+        emit SetUnstakeWaitPeriod(
+            oldUnstakeWaitPeriod,
+            unstakeWaitPeriod
+            );
     }
 
-    //Cutting off the payReward loop at 5 and setting the intermediate target to depth / 2
-    function getRewardTargetEpoch()
-        internal view returns(uint256)
+    /// @notice Called by the DAO Agent to set the APR update coefficient
+    /// @param _aprUpdateCoefficient APR update coefficient
+    function setAprUpdateCoefficient(uint256 _aprUpdateCoefficient)
+        external
+        override
+        onlyDaoAgent()
     {
-        uint256 currentEpoch = now.div(rewardEpochLength);
-        uint256 unpaidEpochs = currentEpoch.sub(lastEpochPaid);
-        return unpaidEpochs <= 5 ? currentEpoch : lastEpochPaid.add(unpaidEpochs.div(2));
+        require(
+            _aprUpdateCoefficient <= 1_000_000_000
+                && _aprUpdateCoefficient > 0,
+            ERROR_VALUE
+            );
+        uint256 oldAprUpdateCoefficient = aprUpdateCoefficient;
+        aprUpdateCoefficient = _aprUpdateCoefficient;
+        emit SetAprUpdateCoefficient(
+            oldAprUpdateCoefficient,
+            aprUpdateCoefficient
+            );
     }
 
-    // From https://github.com/aragon/minime/blob/1d5251fc88eee5024ff318d95bc9f4c5de130430/contracts/MiniMeToken.sol#L431
-    function getValueAt(Checkpoint[] storage checkpoints, uint _block)
-        internal view returns (uint)
+    /// @notice Called by the DAO Agent to set the voting power threshold for
+    /// proposals
+    /// @param _proposalVotingPowerThreshold Voting power threshold for
+    /// proposals
+    function setProposalVotingPowerThreshold(uint256 _proposalVotingPowerThreshold)
+        external
+        override
+        onlyDaoAgent()
     {
-        if (checkpoints.length == 0)
-            return 0;
-
-        // Shortcut for the actual value
-        if (_block >= checkpoints[checkpoints.length.sub(1)].fromBlock)
-            return checkpoints[checkpoints.length.sub(1)].value;
-        if (_block < checkpoints[0].fromBlock)
-            return 0;
-
-        // Binary search of the value in the array
-        uint min = 0;
-        uint max = checkpoints.length.sub(1);
-        while (max > min) {
-            uint mid = (max.add(min).add(1)).div(2);
-            if (checkpoints[mid].fromBlock<=_block) {
-                min = mid;
-            } else {
-                max = mid.sub(1);
-            }
-        }
-        return checkpoints[min].value;
+        require(
+            _proposalVotingPowerThreshold <= 10 * onePercent
+                && _proposalVotingPowerThreshold >= 0,
+            ERROR_VALUE);
+        uint256 oldProposalVotingPowerThreshold = proposalVotingPowerThreshold;
+        proposalVotingPowerThreshold = _proposalVotingPowerThreshold;
+        emit SetProposalVotingPowerThreshold(
+            oldProposalVotingPowerThreshold,
+            proposalVotingPowerThreshold
+            );
     }
 
-    function getValue(Checkpoint[] storage checkpoints)
-        internal view returns (uint256)
+    /// @notice Called by the owner of the proposal to publish the specs URL
+    /// @dev Since the owner of a proposal is known, users publishing specs for
+    /// a proposal that is not their own is not a concern
+    /// @param proposalIndex Proposal index
+    /// @param specsUrl URL that hosts the specs of the transaction that will
+    /// be made if the proposal passes
+    function publishSpecsUrl(
+        uint256 proposalIndex,
+        string calldata specsUrl
+        )
+        external
+        override
     {
-        return getValueAt(checkpoints, block.number);
+        userAddressToProposalIndexToSpecsUrl[msg.sender][proposalIndex] = specsUrl;
+        emit PublishedSpecsUrl(
+            proposalIndex,
+            msg.sender,
+            specsUrl
+            );
     }
-
-
 }

@@ -33,7 +33,7 @@ function NewProposalModal(props: any) {
     linkInfo: '',
     otherAddress: '',
     parameter: 'staketarget',
-    stakeAmount: '',
+    stakeAmount: '10000000',
     minAmountAPR: 0,
     maxAmountAPR: 0,
     updateRateAPR: 0,

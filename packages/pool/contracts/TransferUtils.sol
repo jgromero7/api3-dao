@@ -3,6 +3,7 @@ pragma solidity 0.6.12;
 
 import "./DelegationUtils.sol";
 import "./interfaces/ITransferUtils.sol";
+import "hardhat/console.sol";
 
 /// @title Contract that implements token transfer functionality
 contract TransferUtils is DelegationUtils, ITransferUtils {
@@ -54,9 +55,10 @@ contract TransferUtils is DelegationUtils, ITransferUtils {
         }
         // Check if the user has `amount` unlocked tokens to withdraw
         uint256 lockedAndVesting = user.locked.add(user.vesting);
-        uint256 unlocked = user.unstaked > lockedAndVesting ? user.unstaked.sub(lockedAndVesting) : 0;
-        require(unlocked >= amount, "Amount exceeds available balance");
+        uint256 userTotalFunds = user.unstaked.add(userStake(msg.sender));
+        require(userTotalFunds >= lockedAndVesting.add(amount), ERROR_VALUE);
         // Carry on with the withdrawal
+        require(user.unstaked >= amount, ERROR_VALUE);
         user.unstaked = user.unstaked.sub(amount);
         api3Token.transfer(destination, amount);
         emit Withdrawn(msg.sender,

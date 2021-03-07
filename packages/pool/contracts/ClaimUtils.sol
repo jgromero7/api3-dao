@@ -6,6 +6,12 @@ import "./interfaces/IClaimUtils.sol";
 
 /// @title Contract that implements the insurance claim payout functionality
 contract ClaimUtils is StakeUtils, IClaimUtils {
+    /// @dev Reverts if the caller is not a claims manager
+    modifier onlyClaimsManager() {
+        require(claimsManagerStatus[msg.sender], ERROR_UNAUTHORIZED);
+        _;
+    }
+
     /// @param api3TokenAddress API3 token contract address
     constructor(address api3TokenAddress)
         StakeUtils(api3TokenAddress)
@@ -27,7 +33,9 @@ contract ClaimUtils is StakeUtils, IClaimUtils {
         onlyClaimsManager()
     {
         uint256 totalStakedNow = getValue(totalStaked);
-        uint256 totalStakedAfter = totalStakedNow > amount ? totalStakedNow.sub(amount) : 1;
+        uint256 totalStakedAfter = totalStakedNow > amount
+            ? totalStakedNow.sub(amount)
+            : 1;
         totalStaked.push(Checkpoint({
             fromBlock: block.number,
             value: totalStakedAfter

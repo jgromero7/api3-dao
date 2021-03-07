@@ -39,6 +39,10 @@ contract StateUtils is IStateUtils {
         uint256 oldestLockedEpoch;
     }
 
+    string constant ERROR_UNAUTHORIZED = "Unauthorized";
+    string constant ERROR_ADDRESS = "Invalid address";
+    string constant ERROR_VALUE = "Invalid value";
+
     /// @notice API3 token contract
     IApi3Token public api3Token;
 
@@ -54,25 +58,27 @@ contract StateUtils is IStateUtils {
     /// statuses are kept as a mapping to support multiple claims managers.
     mapping(address => bool) public claimsManagerStatus;
 
-    /// @notice Length of the epoch in which staking reward is paid out once.
-    /// Hardcoded as 7 days in seconds.
+    /// @notice Length of the epoch in which the staking reward is paid out
+    /// once. It is hardcoded as 7 days in seconds.
     /// @dev In addition to regulating reward payments, this variable is used
-    /// for two additional things:
-    /// (1) Once an unstaking scheduling matures, the staker has `epochLength`
+    /// for three additional things:
+    /// (1) Once an unstaking scheduling matures, the user has `epochLength`
     /// to execute the unstaking before it expires
-    /// (2) After a staker makes a proposal, they cannot make a second one
+    /// (2) After a user makes a proposal, they cannot make a second one
     /// before `epochLength` has passed
+    /// (3) After a user updates their delegation status, they have to wait
+    /// `epochLength` before updating it again
     uint256 public constant epochLength = 7 * 24 * 60 * 60;
 
     /// @notice Number of epochs before the staking rewards get unlocked.
-    /// Hardcoded as 52 epochs (corresponding to a year).
+    /// Hardcoded as 52 epochs, which corresponds to a year.
     uint256 public constant rewardVestingPeriod = 52;
 
     /// @notice Epochs are indexed as `now / epochLength`. `genesisEpoch` is
     /// the index of the epoch in which the pool is deployed.
     uint256 public immutable genesisEpoch;
 
-    /// @notice Records of rewards paid in epochs
+    /// @notice Records of rewards paid in each epoch
     mapping(uint256 => Reward) public epochIndexToReward;
 
     /// @notice Epoch index of the most recent reward payment
@@ -113,20 +119,22 @@ contract StateUtils is IStateUtils {
     /// @dev Since this is a coefficient, it has no unit. A coefficient of 1e6
     /// means 1% deviation from the stake target results in 1% update in APR.
     /// This parameter is governable by the DAO.
-    uint256 public aprUpdateCoeff = 1_000_000;
+    uint256 public aprUpdateCoefficient = 1_000_000;
 
-    /// @notice Users need to schedule an unstaking and wait for
+    /// @notice Users need to schedule an unstake and wait for
     /// `unstakeWaitPeriod` before being able to unstake. This is to prevent
     /// the stakers from frontrunning insurance claims by unstaking to evade
     /// them, or repeatedly unstake/stake to work around the proposal spam
-    /// guard.
+    /// protection.
     /// @dev This parameter is governable by the DAO, and the DAO is expected
-    /// to set this large enough to allow insurance claims to be resolved.
+    /// to set this to a value that is large enough to allow insurance claims
+    /// to be resolved.
     uint256 public unstakeWaitPeriod = epochLength;
 
     /// @notice Minimum voting power the users must have to be able to make
     /// proposals (in percentages)
-    /// @dev Delegations count towards voting power
+    /// @dev Delegations count towards voting power.
+    /// Default value is 0.1%. This parameter is governable by the DAO.
     uint256 public proposalVotingPowerThreshold = 100_000;
 
     /// @notice APR that will be paid next epoch
@@ -142,21 +150,9 @@ contract StateUtils is IStateUtils {
     /// parameters) at a URL
     mapping(address => mapping(uint256 => string)) public userAddressToProposalIndexToSpecsUrl;
 
-    /// @dev Pays the epoch reward before the modified function
-    modifier payEpochRewardBefore {
-        payReward();
-        _;
-    }
-
     /// @dev Reverts if the caller is not the DAO Agent App
     modifier onlyDaoAgent() {
-        require(msg.sender == daoAgent, "Unauthorized");
-        _;
-    }
-
-    /// @dev Reverts if the caller is not a claims manager
-    modifier onlyClaimsManager() {
-        require(claimsManagerStatus[msg.sender], "Unauthorized");
+        require(msg.sender == daoAgent, ERROR_UNAUTHORIZED);
         _;
     }
 
@@ -197,8 +193,8 @@ contract StateUtils is IStateUtils {
         external
         override
     {
-        require(_daoAgent != address(0), "Invalid address");
-        require(daoAgent == address(0), "DAO Agent already set");
+        require(_daoAgent != address(0), ERROR_ADDRESS);
+        require(daoAgent == address(0), ERROR_UNAUTHORIZED);
         daoAgent = _daoAgent;
         emit SetDaoAgent(daoAgent);
     }
@@ -208,6 +204,8 @@ contract StateUtils is IStateUtils {
     /// @dev The claims manager is a trusted contract that is allowed to
     /// withdraw as many tokens as it wants from the pool to pay out insurance
     /// claims.
+    /// @param claimsManager Claims manager contract address
+    /// @param status Authorization status
     function setClaimsManagerStatus(
         address claimsManager,
         bool status
@@ -223,311 +221,134 @@ contract StateUtils is IStateUtils {
             );
     }
 
-    /// @notice Updates the current APR
-    /// @dev Called internally before paying out the reward
-    /// @param totalStakedNow Current total number of tokens staked at the pool
-    function updateCurrentApr(uint256 totalStakedNow)
-        internal
-    {
-        if (stakeTarget == 0) {
-            currentApr = minApr;
-            return;
-        }
-        // Calculate what % we are off from the target
-        uint256 deltaAbsolute = totalStakedNow < stakeTarget 
-            ? stakeTarget.sub(totalStakedNow) : totalStakedNow.sub(stakeTarget);
-        uint256 deltaPercentage = deltaAbsolute.mul(hundredPercent).div(stakeTarget);
-        // Use the update coefficient to calculate what % we need to update
-        // the APR with
-        uint256 aprUpdate = deltaPercentage.mul(aprUpdateCoeff).div(onePercent);
-
-        uint256 newApr;
-        if (totalStakedNow < stakeTarget) {
-            newApr = currentApr.mul(hundredPercent.add(aprUpdate)).div(hundredPercent);
-        }
-        else {
-            newApr = hundredPercent > aprUpdate
-                ? currentApr.mul(hundredPercent.sub(aprUpdate)).div(hundredPercent) : 0;
-        }
-
-        if (newApr < minApr) {
-            currentApr = minApr;
-        }
-        else if (newApr > maxApr) {
-            currentApr = maxApr;
-        }
-        else {
-            currentApr = newApr;
-        }
-    }
-
-    /// @notice Called to pay the reward for the current epoch
-    /// @dev Skips past epochs for which rewards have not been paid for.
-    /// Skips the reward payment if the pool is not authorized to mint tokens.
-    /// Neither of these conditions will happen in practice.
-    function payReward()
-        public
-        override
-    {
-        uint256 currentEpoch = now.div(epochLength);
-        // This will be skipped in most cases because someone else will have
-        // triggered the payment for this epoch
-        if (epochIndexOfLastRewardPayment < currentEpoch)
-        {
-            if (api3Token.getMinterStatus(address(this)))
-            {
-                uint256 totalStakedNow = getValue(totalStaked);
-                updateCurrentApr(totalStakedNow);
-                uint256 rewardAmount = totalStakedNow.mul(currentApr).div(rewardVestingPeriod).div(hundredPercent);
-                epochIndexToReward[currentEpoch] = Reward({
-                    atBlock: block.number,
-                    amount: rewardAmount
-                    });
-                if (rewardAmount > 0) {
-                    api3Token.mint(address(this), rewardAmount);
-                    totalStaked.push(Checkpoint({
-                        fromBlock: block.number,
-                        value: totalStakedNow.add(rewardAmount)
-                        }));
-                }
-                emit PaidReward(
-                    currentEpoch,
-                    rewardAmount,
-                    currentApr
-                    );
-            }
-            epochIndexOfLastRewardPayment = currentEpoch;
-        }
-    }
-
-    /// @notice Updates the locked tokens of the user
-    /// @dev The user has to update their locked tokens up to the current epoch
-    /// before withdrawing. In case this costs too much gas, this method
-    /// accepts a `targetEpoch` parameter for the user to be able to make this
-    /// update through multiple transactions.
-    /// @param userAddress User address
-    /// @param targetEpoch Epoch index until which the locked tokens will be
-    /// updated
-    function updateUserLocked(
-        address userAddress,
-        uint256 targetEpoch
-        )
-        public
-        override
-    {
-        uint256 newLocked = getUserLockedAt(userAddress, targetEpoch);
-        User storage user = users[userAddress];
-        user.locked = newLocked;
-        user.oldestLockedEpoch = getOldestLockedEpoch();
-        user.lastUpdateEpoch = targetEpoch;
-        emit UpdatedUserLocked(
-            userAddress,
-            targetEpoch,
-            user.locked
-            );
-    }
-
-    /// @notice Called to get the locked tokens of the user at a specific epoch
-    /// @param userAddress User address
-    /// @param targetEpoch Epoch index for which the locked tokens will be
-    /// returned
-    /// @return Locked tokens of the user at the epoch
-    function getUserLockedAt(
-        address userAddress,
-        uint256 targetEpoch
-        )
-        public
-        override
-        payEpochRewardBefore()
-        returns(uint256)
-    {
-        uint256 currentEpoch = now.div(epochLength);
-        uint256 oldestLockedEpoch = getOldestLockedEpoch();
-        User storage user = users[userAddress];
-        uint256 lastUpdateEpoch = user.lastUpdateEpoch;
-        require(targetEpoch <= currentEpoch
-            && targetEpoch > lastUpdateEpoch
-            && targetEpoch > oldestLockedEpoch,
-            "Invalid target"
-            );
-        // If the last update is way in the past, we can just reset all locked
-        // and lock back rewards paid in the last `rewardVestingPeriod`
-        if (lastUpdateEpoch < oldestLockedEpoch) {
-            uint256 locked = 0;
-            for (
-                uint256 ind = oldestLockedEpoch;
-                ind <= targetEpoch;
-                ind = ind.add(1)
-            ) {
-                Reward storage lockedReward = epochIndexToReward[ind];
-                if (lockedReward.atBlock != 0)
-                {
-                    uint256 totalSharesThen = getValueAt(totalShares, lockedReward.atBlock);
-                    uint256 userSharesThen = getValueAt(user.shares, lockedReward.atBlock);
-                    locked = locked.add(lockedReward.amount.mul(userSharesThen).div(totalSharesThen));
-                }
-            }
-            return locked;
-        }
-        // ...otherwise, start by locking the rewards since the last update
-        uint256 locked = user.locked;
-        for (
-            uint256 ind = lastUpdateEpoch.add(1);
-            ind <= targetEpoch;
-            ind = ind.add(1)
-        ) {
-            Reward storage lockedReward = epochIndexToReward[ind];
-            if (lockedReward.atBlock != 0)
-            {
-                uint256 totalSharesThen = getValueAt(totalShares, lockedReward.atBlock);
-                uint256 userSharesThen = getValueAt(user.shares, lockedReward.atBlock);
-                locked = locked.add(lockedReward.amount.mul(userSharesThen).div(totalSharesThen));
-            }
-        }
-        // ...then unlock the rewards that have matured (if applicable)
-        if (targetEpoch >= genesisEpoch.add(rewardVestingPeriod)) {
-            for (
-                uint256 ind = user.oldestLockedEpoch;
-                ind <= oldestLockedEpoch.sub(1);
-                ind = ind.add(1)
-            ) {
-                Reward storage unlockedReward = epochIndexToReward[ind.sub(rewardVestingPeriod)];
-                if (unlockedReward.atBlock != 0)
-                {
-                    uint256 totalSharesThen = getValueAt(totalShares, unlockedReward.atBlock);
-                    uint256 userSharesThen = getValueAt(user.shares, unlockedReward.atBlock);
-                    uint256 toUnlock = unlockedReward.amount.mul(userSharesThen).div(totalSharesThen);
-                    // `locked` has a risk of underflowing due to the reward
-                    // revocations during scheduling unstakes, which is why we
-                    // clip it at 0
-                    locked = locked > toUnlock ? locked.sub(toUnlock) : 0;
-                }
-            }
-        }
-        return locked;
-    }
-
-    /// @notice Called to get the current locked tokens of the user
-    /// @dev This can be called statically by clients (e.g., the DAO dashboard)
-    /// to get the locked tokens of the user without actually updating it
-    /// @param userAddress User address
-    /// @return Current locked tokens of the user
-    function getUserLocked(address userAddress)
+    /// @notice Called by the DAO Agent to set the stake target
+    /// @param _stakeTarget Stake target
+    function setStakeTarget(uint256 _stakeTarget)
         external
         override
-        returns(uint256)
+        onlyDaoAgent()
     {
-        return getUserLockedAt(userAddress, now.div(epochLength));
+        uint256 oldStakeTarget = stakeTarget;
+        stakeTarget = _stakeTarget;
+        emit SetStakeTarget(
+            oldStakeTarget,
+            stakeTarget
+            );
     }
 
-    /// @notice Called to get the index of the oldest epoch whose reward is
-    /// still locked
-    /// @return Index of the oldest epoch whose reward is still locked
-    function getOldestLockedEpoch()
-        internal
-        view
-        returns(uint256)
+    /// @notice Called by the DAO Agent to set the maximum APR
+    /// @param _maxApr Maximum APR
+    function setMaxApr(uint256 _maxApr)
+        external
+        override
+        onlyDaoAgent()
     {
-        uint256 currentEpoch = now.div(epochLength);
-        return currentEpoch >= genesisEpoch.add(rewardVestingPeriod)
-            ? currentEpoch.sub(rewardVestingPeriod) : genesisEpoch;
+        require(_maxApr >= minApr, ERROR_VALUE);
+        uint256 oldMaxApr = maxApr;
+        maxApr = _maxApr;
+        emit SetMaxApr(
+            oldMaxApr,
+            maxApr
+            );
     }
 
-    /// @notice Called to get the value of a checkpoint array at a specific
-    /// block
-    /// @dev From 
-    /// https://github.com/aragon/minime/blob/1d5251fc88eee5024ff318d95bc9f4c5de130430/contracts/MiniMeToken.sol#L431
-    /// @param checkpoints Checkpoints array
-    /// @param _block Block number for which the query is being made
-    /// @return Value of the checkpoint array at the block
-    function getValueAt(
-        Checkpoint[] storage checkpoints,
-        uint _block
+    /// @notice Called by the DAO Agent to set the minimum APR
+    /// @param _minApr Minimum APR
+    function setMinApr(uint256 _minApr)
+        external
+        override
+        onlyDaoAgent()
+    {
+        require(_minApr <= maxApr, ERROR_VALUE);
+        uint256 oldMinApr = minApr;
+        minApr = _minApr;
+        emit SetMinApr(
+            oldMinApr,
+            minApr
+            );
+    }
+
+    /// @notice Called by the DAO Agent to set the unstake waiting period
+    /// @dev This may want to be increased to provide more time for insurance
+    /// claims to be resolved.
+    /// Even when the insurance functionality is not implemented, the minimum
+    /// valid value is `epochLength` to prevent users from unstaking,
+    /// withdrawing and staking with another address to work around the
+    /// proposal spam protection.
+    /// @param _unstakeWaitPeriod Unstake waiting period
+    function setUnstakeWaitPeriod(uint256 _unstakeWaitPeriod)
+        external
+        override
+        onlyDaoAgent()
+    {
+        require(_unstakeWaitPeriod >= epochLength, ERROR_VALUE);
+        uint256 oldUnstakeWaitPeriod = unstakeWaitPeriod;
+        unstakeWaitPeriod = _unstakeWaitPeriod;
+        emit SetUnstakeWaitPeriod(
+            oldUnstakeWaitPeriod,
+            unstakeWaitPeriod
+            );
+    }
+
+    /// @notice Called by the DAO Agent to set the APR update coefficient
+    /// @param _aprUpdateCoefficient APR update coefficient
+    function setAprUpdateCoefficient(uint256 _aprUpdateCoefficient)
+        external
+        override
+        onlyDaoAgent()
+    {
+        require(
+            _aprUpdateCoefficient <= 1_000_000_000
+                && _aprUpdateCoefficient > 0,
+            ERROR_VALUE
+            );
+        uint256 oldAprUpdateCoefficient = aprUpdateCoefficient;
+        aprUpdateCoefficient = _aprUpdateCoefficient;
+        emit SetAprUpdateCoefficient(
+            oldAprUpdateCoefficient,
+            aprUpdateCoefficient
+            );
+    }
+
+    /// @notice Called by the DAO Agent to set the voting power threshold for
+    /// proposals
+    /// @param _proposalVotingPowerThreshold Voting power threshold for
+    /// proposals
+    function setProposalVotingPowerThreshold(uint256 _proposalVotingPowerThreshold)
+        external
+        override
+        onlyDaoAgent()
+    {
+        require(
+            _proposalVotingPowerThreshold <= 10 * onePercent
+                && _proposalVotingPowerThreshold >= 0,
+            ERROR_VALUE);
+        uint256 oldProposalVotingPowerThreshold = proposalVotingPowerThreshold;
+        proposalVotingPowerThreshold = _proposalVotingPowerThreshold;
+        emit SetProposalVotingPowerThreshold(
+            oldProposalVotingPowerThreshold,
+            proposalVotingPowerThreshold
+            );
+    }
+
+    /// @notice Called by the owner of the proposal to publish the specs URL
+    /// @dev Since the owner of a proposal is known, users publishing specs for
+    /// a proposal that is not their own is not a concern
+    /// @param proposalIndex Proposal index
+    /// @param specsUrl URL that hosts the specs of the transaction that will
+    /// be made if the proposal passes
+    function publishSpecsUrl(
+        uint256 proposalIndex,
+        string calldata specsUrl
         )
-        internal
-        view
-        returns(uint)
+        external
+        override
     {
-        if (checkpoints.length == 0)
-            return 0;
-
-        // Shortcut for the actual value
-        if (_block >= checkpoints[checkpoints.length.sub(1)].fromBlock)
-            return checkpoints[checkpoints.length.sub(1)].value;
-        if (_block < checkpoints[0].fromBlock)
-            return 0;
-
-        // Binary search of the value in the array
-        uint min = 0;
-        uint max = checkpoints.length.sub(1);
-        while (max > min) {
-            uint mid = (max.add(min).add(1)).div(2);
-            if (checkpoints[mid].fromBlock<=_block) {
-                min = mid;
-            } else {
-                max = mid.sub(1);
-            }
-        }
-        return checkpoints[min].value;
-    }
-
-    /// @notice Called to get the current value of the checkpoint array
-    /// @param checkpoints Checkpoints array
-    /// @return Current value of the checkpoint array
-    function getValue(Checkpoint[] storage checkpoints)
-        internal
-        view
-        returns (uint256)
-    {
-        return getValueAt(checkpoints, block.number);
-    }
-
-    /// @notice Called to get the value of an address checkpoint array at a
-    /// specific block
-    /// @dev This is same as `getValueAt()`, except the value being kept in the
-    /// checkpoints is an address
-    /// @param checkpoints Address checkpoints array
-    /// @param _block Block number for which the query is being made
-    /// @return Address value of the checkpoint array at the block
-    function getAddressAt(
-        AddressCheckpoint[] storage checkpoints,
-        uint _block
-        )
-        internal
-        view
-        returns(address)
-    {
-        if (checkpoints.length == 0)
-            return address(0);
-
-        // Shortcut for the actual value
-        if (_block >= checkpoints[checkpoints.length.sub(1)].fromBlock)
-            return checkpoints[checkpoints.length.sub(1)]._address;
-        if (_block < checkpoints[0].fromBlock)
-            return address(0);
-
-        // Binary search of the value in the array
-        uint min = 0;
-        uint max = checkpoints.length.sub(1);
-        while (max > min) {
-            uint mid = (max.add(min).add(1)).div(2);
-            if (checkpoints[mid].fromBlock<=_block) {
-                min = mid;
-            } else {
-                max = mid.sub(1);
-            }
-        }
-        return checkpoints[min]._address;
-    }
-
-    /// @notice Called to get the current value of an address checkpoint array
-    /// @param checkpoints Address checkpoints array
-    /// @return Current address value of the checkpoint array
-    function getAddress(AddressCheckpoint[] storage checkpoints)
-        internal
-        view
-        returns(address)
-    {
-        return getAddressAt(checkpoints, block.number);
+        userAddressToProposalIndexToSpecsUrl[msg.sender][proposalIndex] = specsUrl;
+        emit PublishedSpecsUrl(
+            proposalIndex,
+            msg.sender,
+            specsUrl
+            );
     }
 }

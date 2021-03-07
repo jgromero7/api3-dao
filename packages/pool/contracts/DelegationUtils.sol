@@ -1,14 +1,14 @@
 //SPDX-License-Identifier: MIT
 pragma solidity 0.6.12;
 
-import "./GetterUtils.sol";
+import "./RewardUtils.sol";
 import "./interfaces/IDelegationUtils.sol";
 
 /// @title Contract that implements voting power delegation
-contract DelegationUtils is GetterUtils, IDelegationUtils {
+contract DelegationUtils is RewardUtils, IDelegationUtils {
     /// @param api3TokenAddress API3 token contract address
     constructor(address api3TokenAddress)
-        GetterUtils(api3TokenAddress)
+        RewardUtils(api3TokenAddress)
         public
     {}
 
@@ -18,14 +18,23 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
         external
         override
     {
-        require(delegate != address(0) && delegate != msg.sender, "Invalid address");
         // Delegating users have cannot use their voting power, so we are
         // verifying that the delegate is not currently delegating. However,
         // the delegate may delegate after they have been delegated to.
-        require(!userDelegating(delegate), "Delegate is delegating");
-
+        require(
+            delegate != address(0)
+                && delegate != msg.sender
+                && userDelegate(delegate) == address(0),
+            ERROR_ADDRESS
+            );
         User storage user = users[msg.sender];
-        require(user.lastDelegationUpdateTimestamp <= now.sub(epochLength), "Frequent delegation update");
+        // Do not allow frequent delegation updates as that can be used to spam
+        // proposals
+        require(
+            user.lastDelegationUpdateTimestamp <= now.sub(epochLength),
+            ERROR_UNAUTHORIZED
+            );
+        user.lastDelegationUpdateTimestamp = now;
         uint256 userShares = getValue(user.shares);
         address userDelegate = getAddress(user.delegates);
         if (userDelegate == delegate) {
@@ -34,27 +43,22 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
         if (userDelegate != address(0)) {
             // Need to revoke previous delegation
             User storage prevDelegate = users[userDelegate];
-            prevDelegate.delegatedTo.push(
-                Checkpoint({
-                    fromBlock: block.number,
-                    value: getValue(prevDelegate.delegatedTo).sub(userShares)
-                    })
-            );
+            prevDelegate.delegatedTo.push(Checkpoint({
+                fromBlock: block.number,
+                value: getValue(prevDelegate.delegatedTo).sub(userShares)
+                }));
         }
         // Assign the new delegation
         User storage _delegate = users[delegate];
-        _delegate.delegatedTo.push(
-            Checkpoint({
-                fromBlock: block.number,
-                value: getValue(_delegate.delegatedTo).add(userShares)
-                })
-        );
+        _delegate.delegatedTo.push(Checkpoint({
+            fromBlock: block.number,
+            value: getValue(_delegate.delegatedTo).add(userShares)
+            }));
         // Record the new delegate for the user
         user.delegates.push(AddressCheckpoint({
             fromBlock: block.number,
             _address: delegate
             }));
-        user.lastDelegationUpdateTimestamp = now;
         emit Delegated(
             msg.sender,
             delegate
@@ -67,18 +71,19 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
         override
     {
         User storage user = users[msg.sender];
-        require(user.lastDelegationUpdateTimestamp <= now.sub(epochLength), "Frequent delegation update");
         address userDelegate = getAddress(user.delegates);
-        require(userDelegate != address(0), "Not delegated");
+        require(
+            userDelegate != address(0)
+                && user.lastDelegationUpdateTimestamp <= now.sub(epochLength),
+            ERROR_UNAUTHORIZED
+            );
 
         uint256 userShares = getValue(user.shares);
         User storage delegate = users[userDelegate];
-        delegate.delegatedTo.push(
-            Checkpoint({
-                fromBlock: block.number,
-                value: getValue(delegate.delegatedTo).sub(userShares)
-                })
-        );
+        delegate.delegatedTo.push(Checkpoint({
+            fromBlock: block.number,
+            value: getValue(delegate.delegatedTo).sub(userShares)
+            }));
         user.delegates.push(AddressCheckpoint({
             fromBlock: block.number,
             _address: address(0)
@@ -118,7 +123,9 @@ contract DelegationUtils is GetterUtils, IDelegationUtils {
         if (delta) {
             newDelegatedTo = currentlyDelegatedTo.add(shares);
         } else {
-            newDelegatedTo = currentlyDelegatedTo > shares ? currentlyDelegatedTo.sub(shares) : 0;
+            newDelegatedTo = currentlyDelegatedTo > shares 
+                ? currentlyDelegatedTo.sub(shares)
+                : 0;
         }
         delegate.delegatedTo.push(Checkpoint({
             fromBlock: block.number,

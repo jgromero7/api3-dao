@@ -48,9 +48,12 @@ contract TimelockUtils is ClaimUtils, ITimelockUtils {
         external
         override
     {
-        require(userToDepositorToTimelock[userAddress][msg.sender].remainingAmount == 0, "Timelock already exists");
-        require(releaseEnd > releaseStart, "Invalid schedule");
-        require(amount != 0, "No zero amount");
+        require(userToDepositorToTimelock[userAddress][msg.sender].remainingAmount == 0, ERROR_UNAUTHORIZED);
+        require(
+            releaseEnd > releaseStart
+                && amount != 0,
+            ERROR_VALUE
+            );
         users[userAddress].unstaked = users[userAddress].unstaked.add(amount);
         users[userAddress].vesting = users[userAddress].vesting.add(amount);
         userToDepositorToTimelock[userAddress][msg.sender] = Timelock({
@@ -81,7 +84,7 @@ contract TimelockUtils is ClaimUtils, ITimelockUtils {
         override
     {
         Timelock storage timelock = userToDepositorToTimelock[userAddress][timelockManagerAddress];
-        require(now > timelock.releaseStart, "Release not started");
+        require(now > timelock.releaseStart, ERROR_UNAUTHORIZED);
         uint256 totalUnlocked;
         if (now >= timelock.releaseEnd)
         {

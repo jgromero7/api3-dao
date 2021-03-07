@@ -1,7 +1,7 @@
 //SPDX-License-Identifier: MIT
 pragma solidity 0.6.12;
 
-import "./GovernanceUtils.sol";
+import "./TimelockUtils.sol";
 import "./interfaces/IApi3Pool.sol";
 
 /// @title API3 pool contract
@@ -14,18 +14,18 @@ import "./interfaces/IApi3Pool.sol";
 /// @dev Functionalities of the contract are distributed to files that form a
 /// chain of inheritance:
 /// (1) Api3Pool.sol
-/// (2) GovernanceUtils.sol
-/// (3) TimelockUtils.sol
-/// (4) ClaimUtils.sol
-/// (5) StakeUtils.sol
-/// (6) TransferUtils.sol
-/// (7) DelegationUtils.sol
+/// (2) TimelockUtils.sol
+/// (3) ClaimUtils.sol
+/// (4) StakeUtils.sol
+/// (5) TransferUtils.sol
+/// (6) DelegationUtils.sol
+/// (7) RewardUtils.sol
 /// (8) GetterUtils.sol
 /// (9) StateUtils.sol
-contract Api3Pool is GovernanceUtils, IApi3Pool {
+contract Api3Pool is TimelockUtils, IApi3Pool {
     /// @param api3TokenAddress API3 token contract address
     constructor(address api3TokenAddress)
-        GovernanceUtils(api3TokenAddress)
+        TimelockUtils(api3TokenAddress)
         public
     {}
 }

@@ -21,7 +21,7 @@ import "@aragon/os/contracts/common/Uint256Helpers.sol";
 import "@aragon/id/contracts/IFIFSResolvingRegistrar.sol";
 
 
-contract CustomBaseTemplate is APMNamehash, IsContract {
+contract Api3BaseTemplate is APMNamehash, IsContract {
     using Uint256Helpers for uint256;
 
     /* Hardcoded constant to save gas

@@ -284,7 +284,9 @@ contract TimelockManager is Ownable, ITimelockManager {
                 address(this),
                 timelocked,
                 beneficiary,
-                now > timelocks[recipient].releaseStart ? now : timelocks[recipient].releaseStart,
+                now > timelocks[recipient].releaseStart
+                    ? now
+                    : timelocks[recipient].releaseStart,
                 timelocks[recipient].releaseEnd
                 );
         }

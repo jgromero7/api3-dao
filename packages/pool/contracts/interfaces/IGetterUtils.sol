@@ -4,45 +4,6 @@ pragma solidity 0.6.12;
 import "./IStateUtils.sol";
 
 interface IGetterUtils is IStateUtils {
-    function sharesAt(
-        uint256 fromBlock,
-        address userAddress
-        )
-        external
-        view
-        returns(uint256);
-
-    function shares(address userAddress)
-        external
-        view
-        returns(uint256);
-
-    function delegatedToAt(
-        uint256 fromBlock,
-        address userAddress
-        )
-        external
-        view
-        returns(uint256);
-
-    function delegatedTo(address userAddress)
-        external
-        view
-        returns(uint256);
-
-    function userDelegatingAt(
-        address userAddress,
-        uint256 _block
-        )
-        external
-        view
-        returns(bool);
-
-    function userDelegating(address userAddress)
-        external
-        view
-        returns(bool);
-
     function balanceOfAt(
         uint256 fromBlock,
         address userAddress
@@ -52,11 +13,6 @@ interface IGetterUtils is IStateUtils {
         returns(uint256);
 
     function balanceOf(address userAddress)
-        external
-        view
-        returns(uint256);
-
-    function userStaked(address userAddress)
         external
         view
         returns(uint256);
@@ -80,4 +36,56 @@ interface IGetterUtils is IStateUtils {
         external
         view
         returns(uint256);
+
+    function userSharesAt(
+        uint256 fromBlock,
+        address userAddress
+        )
+        external
+        view
+        returns(uint256);
+
+    function userShares(address userAddress)
+        external
+        view
+        returns(uint256);
+
+    function userStakeAt(
+        uint256 fromBlock,
+        address userAddress
+        )
+        external
+        view
+        returns(uint256);
+
+    function userStake(address userAddress)
+        external
+        view
+        returns(uint256);
+
+    function userReceivedDelegationAt(
+        uint256 fromBlock,
+        address userAddress
+        )
+        external
+        view
+        returns(uint256);
+
+    function userReceivedDelegation(address userAddress)
+        external
+        view
+        returns(uint256);
+
+    function userDelegateAt(
+        address userAddress,
+        uint256 _block
+        )
+        external
+        view
+        returns(address);
+
+    function userDelegate(address userAddress)
+        external
+        view
+        returns(address);
 }

@@ -2,8 +2,6 @@ const { expect } = require("chai");
 
 let roles;
 let api3Token, api3Pool;
-const onePercent = ethers.BigNumber.from("1" + "000" + "000");
-const hundredPercent = ethers.BigNumber.from("100" + "000" + "000");
 
 beforeEach(async () => {
   const accounts = await ethers.getSigners();
@@ -70,11 +68,14 @@ describe("constructor", function () {
     expect(await api3Pool.maxApr()).to.equal(
       ethers.BigNumber.from("75" + "000" + "000")
     );
-    expect(await api3Pool.aprUpdateCoeff()).to.equal(
+    expect(await api3Pool.aprUpdateCoefficient()).to.equal(
       ethers.BigNumber.from("1" + "000" + "000")
     );
     expect(await api3Pool.unstakeWaitPeriod()).to.equal(
       ethers.BigNumber.from(7 * 24 * 60 * 60)
+    );
+    expect(await api3Pool.proposalVotingPowerThreshold()).to.equal(
+      ethers.BigNumber.from("100" + "000")
     );
     // Initialize the APR at max APR
     expect(await api3Pool.currentApr()).to.equal(await api3Pool.maxApr());
@@ -109,7 +110,7 @@ describe("setDaoAgent", function () {
           api3Pool
             .connect(roles.randomPerson)
             .setDaoAgent(roles.randomPerson.address)
-        ).to.be.revertedWith("DAO Agent already set");
+        ).to.be.revertedWith("Unauthorized");
       });
     });
   });
@@ -166,391 +167,308 @@ describe("setClaimsManagerStatus", function () {
   });
 });
 
-describe("payReward", function () {
-  context("Reward for the previous epoch has not been paid", function () {
-    context("Pool contract is authorized to mint tokens", function () {
-      it("updates APR and pays reward", async function () {
-        // Authorize pool contract to mint tokens
-        await api3Token
-          .connect(roles.deployer)
-          .updateMinterStatus(api3Pool.address, true);
-        // Have two users stake
-        const user1Stake = ethers.utils.parseEther("10" + "000" + "000");
-        const user2Stake = ethers.utils.parseEther("30" + "000" + "000");
-        await api3Token
-          .connect(roles.deployer)
-          .transfer(roles.user1.address, user1Stake);
-        await api3Token
-          .connect(roles.deployer)
-          .transfer(roles.user2.address, user2Stake);
-        await api3Token
-          .connect(roles.user1)
-          .approve(api3Pool.address, user1Stake);
-        await api3Token
-          .connect(roles.user2)
-          .approve(api3Pool.address, user2Stake);
-        await api3Pool
-          .connect(roles.user1)
-          .depositAndStake(
-            roles.user1.address,
-            user1Stake,
-            roles.user1.address
-          );
-        await api3Pool
-          .connect(roles.user2)
-          .depositAndStake(
-            roles.user2.address,
-            user2Stake,
-            roles.user2.address
-          );
-        // Fast forward time to one epoch into the future
-        const genesisEpoch = await api3Pool.genesisEpoch();
-        const genesisEpochPlusOne = genesisEpoch.add(ethers.BigNumber.from(1));
-        await ethers.provider.send("evm_setNextBlockTimestamp", [
-          genesisEpochPlusOne
-            .mul(ethers.BigNumber.from(7 * 24 * 60 * 60))
-            .toNumber(),
-        ]);
-        // Pay reward
-        const stakeTarget = await api3Pool.stakeTarget();
-        const totalStake = await api3Pool.totalStake();
-        const aprUpdateCoeff = await api3Pool.aprUpdateCoeff();
-        const deltaAbsolute = totalStake.sub(stakeTarget); // Over target
-        const deltaPercentage = deltaAbsolute
-          .mul(hundredPercent)
-          .div(stakeTarget);
-        const aprUpdate = deltaPercentage.mul(aprUpdateCoeff).div(onePercent);
-        const currentApr = await api3Pool.currentApr();
-        const newApr = currentApr
-          .mul(hundredPercent.sub(aprUpdate))
-          .div(hundredPercent);
-        const rewardAmount = totalStake
-          .mul(newApr)
-          .div(ethers.BigNumber.from(52))
-          .div(hundredPercent);
-        await expect(api3Pool.connect(roles.randomPerson).payReward())
-          .to.emit(api3Pool, "PaidReward")
-          .withArgs(genesisEpochPlusOne, rewardAmount, newApr);
-        expect(await api3Pool.totalStake()).to.equal(
-          totalStake.add(rewardAmount)
-        );
-        expect(await api3Pool.epochIndexOfLastRewardPayment()).to.equal(
-          genesisEpochPlusOne
-        );
-        expect(await api3Pool.currentApr()).to.equal(newApr);
-        const reward = await api3Pool.epochIndexToReward(genesisEpochPlusOne);
-        expect(reward.atBlock).to.equal(await ethers.provider.getBlockNumber());
-        expect(reward.amount).to.equal(rewardAmount);
-      });
-    });
-    context("Pool contract is not authorized to mint tokens", function () {
-      it("skips the payment and APR update", async function () {
-        // Have two users stake
-        const user1Stake = ethers.utils.parseEther("10" + "000" + "000");
-        const user2Stake = ethers.utils.parseEther("30" + "000" + "000");
-        await api3Token
-          .connect(roles.deployer)
-          .transfer(roles.user1.address, user1Stake);
-        await api3Token
-          .connect(roles.deployer)
-          .transfer(roles.user2.address, user2Stake);
-        await api3Token
-          .connect(roles.user1)
-          .approve(api3Pool.address, user1Stake);
-        await api3Token
-          .connect(roles.user2)
-          .approve(api3Pool.address, user2Stake);
-        await api3Pool
-          .connect(roles.user1)
-          .depositAndStake(
-            roles.user1.address,
-            user1Stake,
-            roles.user1.address
-          );
-        await api3Pool
-          .connect(roles.user2)
-          .depositAndStake(
-            roles.user2.address,
-            user2Stake,
-            roles.user2.address
-          );
-        // Fast forward time to one epoch into the future
-        const genesisEpoch = await api3Pool.genesisEpoch();
-        const genesisEpochPlusOne = genesisEpoch.add(ethers.BigNumber.from(1));
-        await ethers.provider.send("evm_setNextBlockTimestamp", [
-          genesisEpochPlusOne
-            .mul(ethers.BigNumber.from(7 * 24 * 60 * 60))
-            .toNumber(),
-        ]);
-        // Pay reward
-        const totalStake = await api3Pool.totalStake();
-        const currentApr = await api3Pool.currentApr();
-        await api3Pool.connect(roles.randomPerson).payReward();
-        expect(await api3Pool.totalStake()).to.equal(totalStake);
-        expect(await api3Pool.epochIndexOfLastRewardPayment()).to.equal(
-          genesisEpochPlusOne
-        );
-        expect(await api3Pool.currentApr()).to.equal(currentApr);
-        const reward = await api3Pool.epochIndexToReward(genesisEpochPlusOne);
-        expect(reward.atBlock).to.equal(0);
-        expect(reward.amount).to.equal(0);
-      });
+describe("setStakeTarget", function () {
+  context("Caller is DAO Agent", function () {
+    it("sets stake target", async function () {
+      await api3Pool
+        .connect(roles.randomPerson)
+        .setDaoAgent(roles.daoAgent.address);
+      const oldStakeTarget = await api3Pool.stakeTarget();
+      const newStakeTarget = ethers.BigNumber.from(123);
+      await expect(
+        api3Pool.connect(roles.daoAgent).setStakeTarget(newStakeTarget)
+      )
+        .to.emit(api3Pool, "SetStakeTarget")
+        .withArgs(oldStakeTarget, newStakeTarget);
+      expect(await api3Pool.stakeTarget()).to.equal(newStakeTarget);
     });
   });
-  context("Rewards for multiple epochs have not been paid", function () {
-    context("Pool contract is authorized to mint tokens", function () {
-      it("updates APR and only pays the reward for the current epoch", async function () {
-        // Authorize pool contract to mint tokens
-        await api3Token
-          .connect(roles.deployer)
-          .updateMinterStatus(api3Pool.address, true);
-        // Have two users stake
-        const user1Stake = ethers.utils.parseEther("10" + "000" + "000");
-        const user2Stake = ethers.utils.parseEther("30" + "000" + "000");
-        await api3Token
-          .connect(roles.deployer)
-          .transfer(roles.user1.address, user1Stake);
-        await api3Token
-          .connect(roles.deployer)
-          .transfer(roles.user2.address, user2Stake);
-        await api3Token
-          .connect(roles.user1)
-          .approve(api3Pool.address, user1Stake);
-        await api3Token
-          .connect(roles.user2)
-          .approve(api3Pool.address, user2Stake);
-        await api3Pool
-          .connect(roles.user1)
-          .depositAndStake(
-            roles.user1.address,
-            user1Stake,
-            roles.user1.address
-          );
-        await api3Pool
-          .connect(roles.user2)
-          .depositAndStake(
-            roles.user2.address,
-            user2Stake,
-            roles.user2.address
-          );
-        // Fast forward time to one epoch into the future
-        const genesisEpoch = await api3Pool.genesisEpoch();
-        const genesisEpochPlusFive = genesisEpoch.add(ethers.BigNumber.from(5));
-        await ethers.provider.send("evm_setNextBlockTimestamp", [
-          genesisEpochPlusFive
-            .mul(ethers.BigNumber.from(7 * 24 * 60 * 60))
-            .toNumber(),
-        ]);
-        // Pay reward
-        const stakeTarget = await api3Pool.stakeTarget();
-        const totalStake = await api3Pool.totalStake();
-        const aprUpdateCoeff = await api3Pool.aprUpdateCoeff();
-        const deltaAbsolute = totalStake.sub(stakeTarget); // Over target
-        const deltaPercentage = deltaAbsolute
-          .mul(hundredPercent)
-          .div(stakeTarget);
-        const aprUpdate = deltaPercentage.mul(aprUpdateCoeff).div(onePercent);
-        const currentApr = await api3Pool.currentApr();
-        const newApr = currentApr
-          .mul(hundredPercent.sub(aprUpdate))
-          .div(hundredPercent);
-        const rewardAmount = totalStake
-          .mul(newApr)
-          .div(ethers.BigNumber.from(52))
-          .div(hundredPercent);
-        await expect(api3Pool.connect(roles.randomPerson).payReward())
-          .to.emit(api3Pool, "PaidReward")
-          .withArgs(genesisEpochPlusFive, rewardAmount, newApr);
-        expect(await api3Pool.totalStake()).to.equal(
-          totalStake.add(rewardAmount)
-        );
-        expect(await api3Pool.epochIndexOfLastRewardPayment()).to.equal(
-          genesisEpochPlusFive
-        );
-        expect(await api3Pool.currentApr()).to.equal(newApr);
-        const reward = await api3Pool.epochIndexToReward(genesisEpochPlusFive);
-        expect(reward.atBlock).to.equal(await ethers.provider.getBlockNumber());
-        expect(reward.amount).to.equal(rewardAmount);
-      });
-      context("Pool contract is not authorized to mint tokens", function () {
-        it("skips the payment and APR update", async function () {
-          // Have two users stake
-          const user1Stake = ethers.utils.parseEther("10" + "000" + "000");
-          const user2Stake = ethers.utils.parseEther("30" + "000" + "000");
-          await api3Token
-            .connect(roles.deployer)
-            .transfer(roles.user1.address, user1Stake);
-          await api3Token
-            .connect(roles.deployer)
-            .transfer(roles.user2.address, user2Stake);
-          await api3Token
-            .connect(roles.user1)
-            .approve(api3Pool.address, user1Stake);
-          await api3Token
-            .connect(roles.user2)
-            .approve(api3Pool.address, user2Stake);
-          await api3Pool
-            .connect(roles.user1)
-            .depositAndStake(
-              roles.user1.address,
-              user1Stake,
-              roles.user1.address
-            );
-          await api3Pool
-            .connect(roles.user2)
-            .depositAndStake(
-              roles.user2.address,
-              user2Stake,
-              roles.user2.address
-            );
-          // Fast forward time to one epoch into the future
-          const genesisEpoch = await api3Pool.genesisEpoch();
-          const genesisEpochPlusFive = genesisEpoch.add(
-            ethers.BigNumber.from(5)
-          );
-          await ethers.provider.send("evm_setNextBlockTimestamp", [
-            genesisEpochPlusFive
-              .mul(ethers.BigNumber.from(7 * 24 * 60 * 60))
-              .toNumber(),
-          ]);
-          // Pay reward
-          const totalStake = await api3Pool.totalStake();
-          const currentApr = await api3Pool.currentApr();
-          await api3Pool.connect(roles.randomPerson).payReward();
-          expect(await api3Pool.totalStake()).to.equal(totalStake);
-          expect(await api3Pool.epochIndexOfLastRewardPayment()).to.equal(
-            genesisEpochPlusFive
-          );
-          expect(await api3Pool.currentApr()).to.equal(currentApr);
-          const reward = await api3Pool.epochIndexToReward(
-            genesisEpochPlusFive
-          );
-          expect(reward.atBlock).to.equal(0);
-          expect(reward.amount).to.equal(0);
-        });
-      });
-    });
-  });
-  context("Reward for the current epoch has been paid", function () {
-    it("does nothing", async function () {
-      // Authorize pool contract to mint tokens
-      await api3Token
-        .connect(roles.deployer)
-        .updateMinterStatus(api3Pool.address, true);
-      // Have two users stake
-      const user1Stake = ethers.utils.parseEther("10" + "000" + "000");
-      const user2Stake = ethers.utils.parseEther("30" + "000" + "000");
-      await api3Token
-        .connect(roles.deployer)
-        .transfer(roles.user1.address, user1Stake);
-      await api3Token
-        .connect(roles.deployer)
-        .transfer(roles.user2.address, user2Stake);
-      await api3Token
-        .connect(roles.user1)
-        .approve(api3Pool.address, user1Stake);
-      await api3Token
-        .connect(roles.user2)
-        .approve(api3Pool.address, user2Stake);
-      await api3Pool
-        .connect(roles.user1)
-        .depositAndStake(roles.user1.address, user1Stake, roles.user1.address);
-      await api3Pool
-        .connect(roles.user2)
-        .depositAndStake(roles.user2.address, user2Stake, roles.user2.address);
-      // Fast forward time to one epoch into the future
-      const genesisEpoch = await api3Pool.genesisEpoch();
-      const genesisEpochPlusOne = genesisEpoch.add(ethers.BigNumber.from(1));
-      await ethers.provider.send("evm_setNextBlockTimestamp", [
-        genesisEpochPlusOne
-          .mul(ethers.BigNumber.from(7 * 24 * 60 * 60))
-          .toNumber(),
-      ]);
-      // Pay reward
-      await api3Pool.connect(roles.randomPerson).payReward();
-      const totalStake = await api3Pool.totalStake();
-      const epochIndexOfLastRewardPayment = await api3Pool.epochIndexOfLastRewardPayment();
-      const currentApr = await api3Pool.currentApr();
-      // Pay reward again
-      await api3Pool.connect(roles.randomPerson).payReward();
-      // Nothing should have changed
-      expect(await api3Pool.totalStake()).to.equal(totalStake);
-      expect(await api3Pool.epochIndexOfLastRewardPayment()).to.equal(
-        epochIndexOfLastRewardPayment
-      );
-      expect(await api3Pool.currentApr()).to.equal(currentApr);
+  context("Caller is not DAO Agent", function () {
+    it("reverts", async function () {
+      const newStakeTarget = ethers.BigNumber.from(123);
+      await expect(
+        api3Pool.connect(roles.randomPerson).setStakeTarget(newStakeTarget)
+      ).to.be.revertedWith("Unauthorized");
     });
   });
 });
 
-describe("getUserLockedAt", function () {
-  context("User never updated before", function () {
-    it("Resets the lock and accumulates the relevant locks", async function () {
-      // Authorize pool contract to mint tokens
-      await api3Token
-        .connect(roles.deployer)
-        .updateMinterStatus(api3Pool.address, true);
-      // Have the user stake
-      const user1Stake = ethers.utils.parseEther("30" + "000" + "000");
-      await api3Token
-        .connect(roles.deployer)
-        .transfer(roles.user1.address, user1Stake);
-      await api3Token
-        .connect(roles.user1)
-        .approve(api3Pool.address, user1Stake);
-      await api3Pool
-        .connect(roles.user1)
-        .depositAndStake(roles.user1.address, user1Stake, roles.user1.address);
-      // In the first `rewardVestingPeriod` epochs, all rewards starting from genesisEpoch will be locked
-      const genesisEpoch = await api3Pool.genesisEpoch();
-      const rewardVestingPeriod = (
-        await api3Pool.rewardVestingPeriod()
-      ).toNumber();
-      for (let i = 0; i < rewardVestingPeriod + 1; i++) {
-        const currentEpoch = genesisEpoch.add(ethers.BigNumber.from(i + 1));
-        await ethers.provider.send("evm_setNextBlockTimestamp", [
-          currentEpoch.mul(ethers.BigNumber.from(7 * 24 * 60 * 60)).toNumber(),
-        ]);
-        await api3Pool.payReward();
-        const locked = await api3Pool.callStatic.getUserLockedAt(
-          roles.user1.address,
-          currentEpoch
-        );
-        const rewards = (await api3Pool.totalStake()).sub(user1Stake);
-        // Need some tolerance for rounding errors
-        expect(rewards.sub(locked).lt(ethers.BigNumber.from(100))).to.be.equal(
-          true
-        );
+describe("setMaxApr", function () {
+  context("Caller is DAO Agent", function () {
+    context(
+      "Max APR to be set is larger than or equal to min APR",
+      function () {
+        it("sets max APR", async function () {
+          await api3Pool
+            .connect(roles.randomPerson)
+            .setDaoAgent(roles.daoAgent.address);
+          const oldMaxApr = await api3Pool.maxApr();
+          const minApr = await api3Pool.minApr();
+          const newMaxApr = minApr.add(ethers.BigNumber.from(123));
+          await expect(api3Pool.connect(roles.daoAgent).setMaxApr(newMaxApr))
+            .to.emit(api3Pool, "SetMaxApr")
+            .withArgs(oldMaxApr, newMaxApr);
+          expect(await api3Pool.maxApr()).to.equal(newMaxApr);
+        });
       }
-      // ...then, only the last `rewardVestingPeriod` epochs will be locked
-      for (
-        let i = rewardVestingPeriod + 1;
-        i < 2 * rewardVestingPeriod + 1;
-        i++
-      ) {
-        const currentEpoch = genesisEpoch.add(ethers.BigNumber.from(i + 1));
-        await ethers.provider.send("evm_setNextBlockTimestamp", [
-          currentEpoch.mul(ethers.BigNumber.from(7 * 24 * 60 * 60)).toNumber(),
-        ]);
-        await api3Pool.payReward();
-        const locked = await api3Pool.callStatic.getUserLockedAt(
-          roles.user1.address,
-          currentEpoch
-        );
-        const currentStake = await api3Pool.totalStake();
-        const unlockEpoch = currentEpoch.sub(
-          ethers.BigNumber.from(rewardVestingPeriod + 1)
-        );
-        const reward = await api3Pool.epochIndexToReward(unlockEpoch);
-        const unlockEpochStake = await api3Pool.totalStakeAt(reward.atBlock);
-        // Need some tolerance for rounding errors
-        expect(
-          currentStake
-            .sub(unlockEpochStake)
-            .sub(locked)
-            .lt(ethers.BigNumber.from(100))
-        ).to.be.equal(true);
-      }
+    );
+    context("Max APR to be set is smaller than min APR", function () {
+      it("reverts", async function () {
+        await api3Pool
+          .connect(roles.randomPerson)
+          .setDaoAgent(roles.daoAgent.address);
+        const minApr = await api3Pool.minApr();
+        const newMaxApr = minApr.sub(ethers.BigNumber.from(123));
+        await expect(
+          api3Pool.connect(roles.daoAgent).setMaxApr(newMaxApr)
+        ).to.be.revertedWith("Invalid value");
+      });
     });
+  });
+  context("Caller is not DAO Agent", function () {
+    it("reverts", async function () {
+      const newMaxApr = ethers.BigNumber.from(123);
+      await expect(
+        api3Pool.connect(roles.randomPerson).setMaxApr(newMaxApr)
+      ).to.be.revertedWith("Unauthorized");
+    });
+  });
+});
+
+describe("setMinApr", function () {
+  context("Caller is DAO Agent", function () {
+    context(
+      "Min APR to be set is smaller than or equal to max APR",
+      function () {
+        it("sets min APR", async function () {
+          await api3Pool
+            .connect(roles.randomPerson)
+            .setDaoAgent(roles.daoAgent.address);
+          const oldMinApr = await api3Pool.minApr();
+          const maxApr = await api3Pool.maxApr();
+          const newMinApr = maxApr.sub(ethers.BigNumber.from(123));
+          await expect(api3Pool.connect(roles.daoAgent).setMinApr(newMinApr))
+            .to.emit(api3Pool, "SetMinApr")
+            .withArgs(oldMinApr, newMinApr);
+          expect(await api3Pool.minApr()).to.equal(newMinApr);
+        });
+      }
+    );
+    context("Min APR to be set is larger than max APR", function () {
+      it("reverts", async function () {
+        await api3Pool
+          .connect(roles.randomPerson)
+          .setDaoAgent(roles.daoAgent.address);
+        const maxApr = await api3Pool.maxApr();
+        const newMinApr = maxApr.add(ethers.BigNumber.from(123));
+        await expect(
+          api3Pool.connect(roles.daoAgent).setMinApr(newMinApr)
+        ).to.be.revertedWith("Invalid value");
+      });
+    });
+  });
+  context("Caller is not DAO Agent", function () {
+    it("reverts", async function () {
+      const newMinApr = ethers.BigNumber.from(123);
+      await expect(
+        api3Pool.connect(roles.randomPerson).setMinApr(newMinApr)
+      ).to.be.revertedWith("Unauthorized");
+    });
+  });
+});
+
+describe("setUnstakeWaitPeriod", function () {
+  context("Caller is DAO Agent", function () {
+    context(
+      "Unstake wait period to be set is larger than or equal to epoch length",
+      function () {
+        it("sets unstake wait period", async function () {
+          await api3Pool
+            .connect(roles.randomPerson)
+            .setDaoAgent(roles.daoAgent.address);
+          const oldUnstakeWaitPeriod = await api3Pool.unstakeWaitPeriod();
+          const epochLength = await api3Pool.epochLength();
+          const newUnstakeWaitPeriod = epochLength.add(
+            ethers.BigNumber.from(123)
+          );
+          await expect(
+            api3Pool
+              .connect(roles.daoAgent)
+              .setUnstakeWaitPeriod(newUnstakeWaitPeriod)
+          )
+            .to.emit(api3Pool, "SetUnstakeWaitPeriod")
+            .withArgs(oldUnstakeWaitPeriod, newUnstakeWaitPeriod);
+          expect(await api3Pool.unstakeWaitPeriod()).to.equal(
+            newUnstakeWaitPeriod
+          );
+        });
+      }
+    );
+    context(
+      "Unstake wait period to be set is smaller than epoch length",
+      function () {
+        it("reverts", async function () {
+          await api3Pool
+            .connect(roles.randomPerson)
+            .setDaoAgent(roles.daoAgent.address);
+          const epochLength = await api3Pool.epochLength();
+          const newUnstakeWaitPeriod = epochLength.sub(
+            ethers.BigNumber.from(123)
+          );
+          await expect(
+            api3Pool
+              .connect(roles.daoAgent)
+              .setUnstakeWaitPeriod(newUnstakeWaitPeriod)
+          ).to.be.revertedWith("Invalid value");
+        });
+      }
+    );
+  });
+  context("Caller is not DAO Agent", function () {
+    it("reverts", async function () {
+      const newUnstakeWaitPeriod = ethers.BigNumber.from(123);
+      await expect(
+        api3Pool
+          .connect(roles.randomPerson)
+          .setUnstakeWaitPeriod(newUnstakeWaitPeriod)
+      ).to.be.revertedWith("Unauthorized");
+    });
+  });
+});
+
+describe("setAprUpdateCoefficient", function () {
+  context("Caller is DAO Agent", function () {
+    context(
+      "APR update coefficient to be set is larger than 0 and smaller than or equal to 1,000,000,000",
+      function () {
+        it("sets APR update coefficient", async function () {
+          await api3Pool
+            .connect(roles.randomPerson)
+            .setDaoAgent(roles.daoAgent.address);
+          const oldAprUpdateCoefficient = await api3Pool.aprUpdateCoefficient();
+          const newAprUpdateCoefficient = ethers.BigNumber.from(
+            "50" + "000" + "000"
+          );
+          await expect(
+            api3Pool
+              .connect(roles.daoAgent)
+              .setAprUpdateCoefficient(newAprUpdateCoefficient)
+          )
+            .to.emit(api3Pool, "SetAprUpdateCoefficient")
+            .withArgs(oldAprUpdateCoefficient, newAprUpdateCoefficient);
+          expect(await api3Pool.aprUpdateCoefficient()).to.equal(
+            newAprUpdateCoefficient
+          );
+        });
+      }
+    );
+    context(
+      "APR update coefficient to be set is 0 or larger than 1,000,000,000",
+      function () {
+        it("reverts", async function () {
+          await api3Pool
+            .connect(roles.randomPerson)
+            .setDaoAgent(roles.daoAgent.address);
+          const newAprUpdateCoefficient1 = ethers.BigNumber.from(0);
+          await expect(
+            api3Pool
+              .connect(roles.daoAgent)
+              .setAprUpdateCoefficient(newAprUpdateCoefficient1)
+          ).to.be.revertedWith("Invalid value");
+          const newAprUpdateCoefficient2 = ethers.BigNumber.from(
+            "50" + "000" + "000" + "000"
+          );
+          await expect(
+            api3Pool
+              .connect(roles.daoAgent)
+              .setAprUpdateCoefficient(newAprUpdateCoefficient2)
+          ).to.be.revertedWith("Invalid value");
+        });
+      }
+    );
+  });
+  context("Caller is not DAO Agent", function () {
+    it("reverts", async function () {
+      const newAprUpdateCoefficient = ethers.BigNumber.from(123);
+      await expect(
+        api3Pool
+          .connect(roles.randomPerson)
+          .setAprUpdateCoefficient(newAprUpdateCoefficient)
+      ).to.be.revertedWith("Unauthorized");
+    });
+  });
+});
+
+describe("setProposalVotingPowerThreshold", function () {
+  context("Caller is DAO Agent", function () {
+    context(
+      "Proposal voting power threshold to be set is larger than 0 and smaller than or equal to 10,000,000",
+      function () {
+        it("sets proposal voting power threshold", async function () {
+          await api3Pool
+            .connect(roles.randomPerson)
+            .setDaoAgent(roles.daoAgent.address);
+          const oldProposalVotingPowerThreshold = await api3Pool.proposalVotingPowerThreshold();
+          const newProposalVotingPowerThreshold = ethers.BigNumber.from(
+            "1" + "000" + "000"
+          );
+          await expect(
+            api3Pool
+              .connect(roles.daoAgent)
+              .setProposalVotingPowerThreshold(newProposalVotingPowerThreshold)
+          )
+            .to.emit(api3Pool, "SetProposalVotingPowerThreshold")
+            .withArgs(
+              oldProposalVotingPowerThreshold,
+              newProposalVotingPowerThreshold
+            );
+          expect(await api3Pool.proposalVotingPowerThreshold()).to.equal(
+            newProposalVotingPowerThreshold
+          );
+        });
+      }
+    );
+    context(
+      "APR update coefficient to be set is 0 or larger than 1,000,000,000",
+      function () {
+        it("reverts", async function () {
+          await api3Pool
+            .connect(roles.randomPerson)
+            .setDaoAgent(roles.daoAgent.address);
+          const newProposalVotingPowerThreshold = ethers.BigNumber.from(
+            "50" + "000" + "000"
+          );
+          await expect(
+            api3Pool
+              .connect(roles.daoAgent)
+              .setProposalVotingPowerThreshold(newProposalVotingPowerThreshold)
+          ).to.be.revertedWith("Invalid value");
+        });
+      }
+    );
+  });
+  context("Caller is not DAO Agent", function () {
+    it("reverts", async function () {
+      const newProposalVotingPowerThreshold = ethers.BigNumber.from(123);
+      await expect(
+        api3Pool
+          .connect(roles.randomPerson)
+          .setProposalVotingPowerThreshold(newProposalVotingPowerThreshold)
+      ).to.be.revertedWith("Unauthorized");
+    });
+  });
+});
+
+describe("publishSpecsUrl", function () {
+  it("publishes specs URL", async function () {
+    const proposalIndex = 123;
+    const specsUrl = "www.myapi.com/specs.json";
+    await expect(
+      api3Pool
+        .connect(roles.randomPerson)
+        .publishSpecsUrl(proposalIndex, specsUrl)
+    )
+      .to.emit(api3Pool, "PublishedSpecsUrl")
+      .withArgs(proposalIndex, roles.randomPerson.address, specsUrl);
   });
 });
